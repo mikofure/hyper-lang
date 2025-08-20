@@ -1,0 +1,261 @@
+// Hyper System I/O Library - systemio/index.hxp
+// Main entry point for system I/O operations
+
+// Re-export all system I/O modules
+export * from './fs/filesystem.hxp';
+export * from './process/process.hxp';
+export * from './network/network.hxp';
+
+// Convenience imports for common operations
+import { fs, FileSystem } from './fs/filesystem.hxp';
+import { process, ProcessManager } from './process/process.hxp';
+import { network, NetworkUtils } from './network/network.hxp';
+import { HypError, createError } from '../mikohyper/core.hxp';
+
+module systemio {
+    // System I/O facade class
+    export class SystemIO {
+        public readonly fs: FileSystem;
+        public readonly process: ProcessManager;
+        public readonly network: NetworkUtils;
+
+        constructor() {
+            this.fs = new FileSystem();
+            this.process = new ProcessManager();
+            this.network = new NetworkUtils();
+        }
+
+        // Quick access methods for common operations
+        async readFile(path: string): Promise<string> {
+            return this.fs.readFile(path) as Promise<string>;
+        }
+
+        async writeFile(path: string, content: string): Promise<void> {
+            return this.fs.writeFile(path, content);
+        }
+
+        async executeCommand(command: string): Promise<string> {
+            const result = await this.process.exec(command);
+            if (result.exitCode !== 0) {
+                throw createError(
+                    `Command failed: ${command}`,
+                    'COMMAND_FAILED',
+                    { command, exitCode: result.exitCode, stderr: result.stderr }
+                );
+            }
+            return result.stdout;
+        }
+
+        async ping(host: string): Promise<boolean> {
+            const result = await this.network.ping(host);
+            return result.alive;
+        }
+
+        async getSystemInfo(): Promise<{
+            platform: string,
+            arch: string,
+            hostname: string,
+            uptime: number,
+            memory: { total: number, free: number },
+            cpu: number,
+            network: {
+                publicIP: string,
+                localIP: string,
+                connectivity: boolean
+            }
+        }> {
+            const [systemInfo, publicIP, localIP, connectivity] = await Promise.all([
+                this.process.getSystemInfo(),
+                this.network.getPublicIP().catch(() => 'unknown'),
+                this.network.getLocalIP().catch(() => '127.0.0.1'),
+                this.network.ping('8.8.8.8').then(r => r.alive).catch(() => false)
+            ]);
+
+            return {
+                platform: systemInfo.platform,
+                arch: systemInfo.arch,
+                hostname: systemInfo.hostname,
+                uptime: systemInfo.uptime,
+                memory: {
+                    total: systemInfo.totalMemory,
+                    free: systemInfo.freeMemory
+                },
+                cpu: systemInfo.cpuCount,
+                network: {
+                    publicIP,
+                    localIP,
+                    connectivity
+                }
+            };
+        }
+
+        // Environment utilities
+        getEnv(name: string): string | undefined {
+            return this.process.getEnvironmentVariable(name);
+        }
+
+        setEnv(name: string, value: string): void {
+            this.process.setEnvironmentVariable(name, value);
+        }
+
+        getCwd(): string {
+            return this.process.getCurrentWorkingDirectory();
+        }
+
+        chdir(path: string): void {
+            this.process.changeWorkingDirectory(path);
+        }
+
+        // Path utilities
+        joinPath(...paths: string[]): string {
+            return this.fs.join(...paths);
+        }
+
+        resolvePath(...paths: string[]): string {
+            return this.fs.resolve(...paths);
+        }
+
+        dirname(path: string): string {
+            return this.fs.dirname(path);
+        }
+
+        basename(path: string, ext?: string): string {
+            return this.fs.basename(path, ext);
+        }
+
+        extname(path: string): string {
+            return this.fs.extname(path);
+        }
+
+        // File/Directory existence and stats
+        async exists(path: string): Promise<boolean> {
+            return this.fs.exists(path);
+        }
+
+        async isFile(path: string): Promise<boolean> {
+            try {
+                const stats = await this.fs.stat(path);
+                return stats.isFile;
+            } catch {
+                return false;
+            }
+        }
+
+        async isDirectory(path: string): Promise<boolean> {
+            try {
+                const stats = await this.fs.stat(path);
+                return stats.isDirectory;
+            } catch {
+                return false;
+            }
+        }
+
+        // Network utilities
+        async isOnline(): Promise<boolean> {
+            return this.ping('8.8.8.8');
+        }
+
+        async getPublicIP(): Promise<string> {
+            return this.network.getPublicIP();
+        }
+
+        async getLocalIP(): Promise<string> {
+            return this.network.getLocalIP();
+        }
+
+        // Process utilities
+        getPid(): number {
+            return this.process.getCurrentProcessId();
+        }
+
+        exit(code: number = 0): void {
+            this.process.exit(code);
+        }
+    }
+
+    // Default system I/O instance
+    export const systemio = new SystemIO();
+
+    // Convenience exports
+    export const {
+        fs: filesystem,
+        process: processManager,
+        network: networkUtils
+    } = systemio;
+
+    // Utility functions
+    export function createSystemIO(): SystemIO {
+        return new SystemIO();
+    }
+
+    // Quick access functions
+    export async function readTextFile(path: string): Promise<string> {
+        return systemio.readFile(path);
+    }
+
+    export async function writeTextFile(path: string, content: string): Promise<void> {
+        return systemio.writeFile(path, content);
+    }
+
+    export async function exec(command: string): Promise<string> {
+        return systemio.executeCommand(command);
+    }
+
+    export async function ping(host: string): Promise<boolean> {
+        return systemio.ping(host);
+    }
+
+    export function env(name: string): string | undefined {
+        return systemio.getEnv(name);
+    }
+
+    export function cwd(): string {
+        return systemio.getCwd();
+    }
+
+    export async function exists(path: string): Promise<boolean> {
+        return systemio.exists(path);
+    }
+
+    export function join(...paths: string[]): string {
+        return systemio.joinPath(...paths);
+    }
+
+    export function resolve(...paths: string[]): string {
+        return systemio.resolvePath(...paths);
+    }
+
+    // Platform detection
+    export function getPlatform(): 'browser' | 'node' | 'unknown' {
+        if (typeof window !== 'undefined') {
+            return 'browser';
+        } else if (typeof process !== 'undefined' && process.versions && process.versions.node) {
+            return 'node';
+        } else {
+            return 'unknown';
+        }
+    }
+
+    export function isBrowser(): boolean {
+        return getPlatform() === 'browser';
+    }
+
+    export function isNode(): boolean {
+        return getPlatform() === 'node';
+    }
+
+    // Error handling utilities
+    export function isSystemIOError(error: any): error is HypError {
+        return error && typeof error === 'object' && error.name === 'HypError';
+    }
+
+    export function handleSystemIOError(error: any): string {
+        if (isSystemIOError(error)) {
+            return `${error.message} (${error.code})`;
+        } else if (error instanceof Error) {
+            return error.message;
+        } else {
+            return String(error);
+        }
+    }
+}

@@ -1,0 +1,395 @@
+// Hyper System I/O Library - systemio/fs/filesystem.hxp
+// Provides file system operations and utilities
+
+import { HypError, createError } from '../../mikohyper/core.hxp';
+
+module systemio.fs.filesystem {
+    // File system types
+    export type FileStats = {
+        size: number,
+        isFile: boolean,
+        isDirectory: boolean,
+        isSymbolicLink: boolean,
+        created: Date,
+        modified: Date,
+        accessed: Date,
+        permissions: string
+    };
+
+    export type ReadOptions = {
+        encoding?: 'utf8' | 'ascii' | 'base64' | 'binary',
+        flag?: string
+    };
+
+    export type WriteOptions = {
+        encoding?: 'utf8' | 'ascii' | 'base64' | 'binary',
+        mode?: string,
+        flag?: string
+    };
+
+    export type DirectoryEntry = {
+        name: string,
+        path: string,
+        isFile: boolean,
+        isDirectory: boolean,
+        stats?: FileStats
+    };
+
+    export type WatchOptions = {
+        recursive?: boolean,
+        persistent?: boolean,
+        encoding?: 'utf8' | 'ascii' | 'base64'
+    };
+
+    export type FileWatcher = {
+        close(): void,
+        on(event: 'change' | 'rename', listener: (eventType: string, filename: string) => void): void,
+        off(event: 'change' | 'rename', listener: (eventType: string, filename: string) => void): void
+    };
+
+    // File system operations
+    export class FileSystem {
+        // File operations
+        async readFile(path: string, options?: ReadOptions): Promise<string | Buffer> {
+            try {
+                // In a real implementation, this would use Node.js fs or browser File API
+                // For now, we'll simulate the interface
+                const encoding = options?.encoding || 'utf8';
+                
+                if (typeof window !== 'undefined') {
+                    // Browser environment
+                    return this.readFileBrowser(path, encoding);
+                } else {
+                    // Node.js environment
+                    return this.readFileNode(path, encoding);
+                }
+            } catch (error) {
+                throw createError(
+                    `Failed to read file: ${path}`,
+                    'FILE_READ_ERROR',
+                    { path, error }
+                );
+            }
+        }
+
+        async writeFile(path: string, data: string | Buffer, options?: WriteOptions): Promise<void> {
+            try {
+                const encoding = options?.encoding || 'utf8';
+                
+                if (typeof window !== 'undefined') {
+                    // Browser environment
+                    await this.writeFileBrowser(path, data, encoding);
+                } else {
+                    // Node.js environment
+                    await this.writeFileNode(path, data, encoding);
+                }
+            } catch (error) {
+                throw createError(
+                    `Failed to write file: ${path}`,
+                    'FILE_WRITE_ERROR',
+                    { path, error }
+                );
+            }
+        }
+
+        async appendFile(path: string, data: string | Buffer, options?: WriteOptions): Promise<void> {
+            try {
+                const existing = await this.exists(path) ? await this.readFile(path, options) : '';
+                await this.writeFile(path, existing + data, options);
+            } catch (error) {
+                throw createError(
+                    `Failed to append to file: ${path}`,
+                    'FILE_APPEND_ERROR',
+                    { path, error }
+                );
+            }
+        }
+
+        async deleteFile(path: string): Promise<void> {
+            try {
+                if (typeof window !== 'undefined') {
+                    // Browser environment - limited file deletion
+                    throw createError(
+                        'File deletion not supported in browser environment',
+                        'OPERATION_NOT_SUPPORTED'
+                    );
+                } else {
+                    // Node.js environment
+                    await this.deleteFileNode(path);
+                }
+            } catch (error) {
+                throw createError(
+                    `Failed to delete file: ${path}`,
+                    'FILE_DELETE_ERROR',
+                    { path, error }
+                );
+            }
+        }
+
+        async copyFile(source: string, destination: string): Promise<void> {
+            try {
+                const data = await this.readFile(source);
+                await this.writeFile(destination, data);
+            } catch (error) {
+                throw createError(
+                    `Failed to copy file from ${source} to ${destination}`,
+                    'FILE_COPY_ERROR',
+                    { source, destination, error }
+                );
+            }
+        }
+
+        async moveFile(source: string, destination: string): Promise<void> {
+            try {
+                await this.copyFile(source, destination);
+                await this.deleteFile(source);
+            } catch (error) {
+                throw createError(
+                    `Failed to move file from ${source} to ${destination}`,
+                    'FILE_MOVE_ERROR',
+                    { source, destination, error }
+                );
+            }
+        }
+
+        // Directory operations
+        async createDirectory(path: string, recursive: boolean = false): Promise<void> {
+            try {
+                if (typeof window !== 'undefined') {
+                    throw createError(
+                        'Directory creation not supported in browser environment',
+                        'OPERATION_NOT_SUPPORTED'
+                    );
+                } else {
+                    await this.createDirectoryNode(path, recursive);
+                }
+            } catch (error) {
+                throw createError(
+                    `Failed to create directory: ${path}`,
+                    'DIRECTORY_CREATE_ERROR',
+                    { path, error }
+                );
+            }
+        }
+
+        async readDirectory(path: string): Promise<DirectoryEntry[]> {
+            try {
+                if (typeof window !== 'undefined') {
+                    return this.readDirectoryBrowser(path);
+                } else {
+                    return this.readDirectoryNode(path);
+                }
+            } catch (error) {
+                throw createError(
+                    `Failed to read directory: ${path}`,
+                    'DIRECTORY_READ_ERROR',
+                    { path, error }
+                );
+            }
+        }
+
+        async deleteDirectory(path: string, recursive: boolean = false): Promise<void> {
+            try {
+                if (typeof window !== 'undefined') {
+                    throw createError(
+                        'Directory deletion not supported in browser environment',
+                        'OPERATION_NOT_SUPPORTED'
+                    );
+                } else {
+                    await this.deleteDirectoryNode(path, recursive);
+                }
+            } catch (error) {
+                throw createError(
+                    `Failed to delete directory: ${path}`,
+                    'DIRECTORY_DELETE_ERROR',
+                    { path, error }
+                );
+            }
+        }
+
+        // File/Directory information
+        async exists(path: string): Promise<boolean> {
+            try {
+                await this.stat(path);
+                return true;
+            } catch {
+                return false;
+            }
+        }
+
+        async stat(path: string): Promise<FileStats> {
+            try {
+                if (typeof window !== 'undefined') {
+                    return this.statBrowser(path);
+                } else {
+                    return this.statNode(path);
+                }
+            } catch (error) {
+                throw createError(
+                    `Failed to get file stats: ${path}`,
+                    'STAT_ERROR',
+                    { path, error }
+                );
+            }
+        }
+
+        // File watching
+        watch(path: string, options?: WatchOptions): FileWatcher {
+            if (typeof window !== 'undefined') {
+                throw createError(
+                    'File watching not supported in browser environment',
+                    'OPERATION_NOT_SUPPORTED'
+                );
+            } else {
+                return this.watchNode(path, options);
+            }
+        }
+
+        // Path utilities
+        join(...paths: string[]): string {
+            return paths
+                .filter(path => path && path.length > 0)
+                .join('/')
+                .replace(/\/+/g, '/')
+                .replace(/\/$/, '') || '/';
+        }
+
+        dirname(path: string): string {
+            const parts = path.split('/');
+            return parts.slice(0, -1).join('/') || '/';
+        }
+
+        basename(path: string, ext?: string): string {
+            const parts = path.split('/');
+            let name = parts[parts.length - 1] || '';
+            if (ext && name.endsWith(ext)) {
+                name = name.slice(0, -ext.length);
+            }
+            return name;
+        }
+
+        extname(path: string): string {
+            const name = this.basename(path);
+            const lastDot = name.lastIndexOf('.');
+            return lastDot > 0 ? name.slice(lastDot) : '';
+        }
+
+        resolve(...paths: string[]): string {
+            let resolved = '';
+            for (const path of paths) {
+                if (path.startsWith('/')) {
+                    resolved = path;
+                } else {
+                    resolved = this.join(resolved, path);
+                }
+            }
+            return resolved;
+        }
+
+        relative(from: string, to: string): string {
+            const fromParts = from.split('/').filter(Boolean);
+            const toParts = to.split('/').filter(Boolean);
+            
+            let commonLength = 0;
+            for (let i = 0; i < Math.min(fromParts.length, toParts.length); i++) {
+                if (fromParts[i] === toParts[i]) {
+                    commonLength++;
+                } else {
+                    break;
+                }
+            }
+            
+            const upCount = fromParts.length - commonLength;
+            const relativeParts = Array(upCount).fill('..').concat(toParts.slice(commonLength));
+            
+            return relativeParts.join('/') || '.';
+        }
+
+        // Platform-specific implementations (stubs)
+        private async readFileBrowser(path: string, encoding: string): Promise<string> {
+            // Browser implementation would use File API
+            throw createError('Browser file reading not implemented', 'NOT_IMPLEMENTED');
+        }
+
+        private async readFileNode(path: string, encoding: string): Promise<string> {
+            // Node.js implementation would use fs module
+            throw createError('Node.js file reading not implemented', 'NOT_IMPLEMENTED');
+        }
+
+        private async writeFileBrowser(path: string, data: any, encoding: string): Promise<void> {
+            // Browser implementation would use File API
+            throw createError('Browser file writing not implemented', 'NOT_IMPLEMENTED');
+        }
+
+        private async writeFileNode(path: string, data: any, encoding: string): Promise<void> {
+            // Node.js implementation would use fs module
+            throw createError('Node.js file writing not implemented', 'NOT_IMPLEMENTED');
+        }
+
+        private async deleteFileNode(path: string): Promise<void> {
+            // Node.js implementation would use fs.unlink
+            throw createError('Node.js file deletion not implemented', 'NOT_IMPLEMENTED');
+        }
+
+        private async createDirectoryNode(path: string, recursive: boolean): Promise<void> {
+            // Node.js implementation would use fs.mkdir
+            throw createError('Node.js directory creation not implemented', 'NOT_IMPLEMENTED');
+        }
+
+        private async readDirectoryBrowser(path: string): Promise<DirectoryEntry[]> {
+            // Browser implementation would use File API
+            throw createError('Browser directory reading not implemented', 'NOT_IMPLEMENTED');
+        }
+
+        private async readDirectoryNode(path: string): Promise<DirectoryEntry[]> {
+            // Node.js implementation would use fs.readdir
+            throw createError('Node.js directory reading not implemented', 'NOT_IMPLEMENTED');
+        }
+
+        private async deleteDirectoryNode(path: string, recursive: boolean): Promise<void> {
+            // Node.js implementation would use fs.rmdir or fs.rm
+            throw createError('Node.js directory deletion not implemented', 'NOT_IMPLEMENTED');
+        }
+
+        private async statBrowser(path: string): Promise<FileStats> {
+            // Browser implementation would use File API
+            throw createError('Browser file stats not implemented', 'NOT_IMPLEMENTED');
+        }
+
+        private async statNode(path: string): Promise<FileStats> {
+            // Node.js implementation would use fs.stat
+            throw createError('Node.js file stats not implemented', 'NOT_IMPLEMENTED');
+        }
+
+        private watchNode(path: string, options?: WatchOptions): FileWatcher {
+            // Node.js implementation would use fs.watch
+            throw createError('Node.js file watching not implemented', 'NOT_IMPLEMENTED');
+        }
+    }
+
+    // Default file system instance
+    export const fs = new FileSystem();
+
+    // Utility functions
+    export function createFileSystem(): FileSystem {
+        return new FileSystem();
+    }
+
+    export function isAbsolute(path: string): boolean {
+        return path.startsWith('/');
+    }
+
+    export function normalize(path: string): string {
+        return path
+            .split('/')
+            .reduce((acc: string[], part: string) => {
+                if (part === '..') {
+                    acc.pop();
+                } else if (part !== '.' && part !== '') {
+                    acc.push(part);
+                }
+                return acc;
+            }, [])
+            .join('/') || '/';
+    }
+}

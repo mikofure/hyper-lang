@@ -1,0 +1,156 @@
+/**
+ * Calculator Example - Hyper Programming Language
+ * 
+ * Demonstrates functions, objects, arrays, and basic arithmetic operations.
+ */
+
+// Calculator object with methods
+let calculator = {
+    name: "Hyper Calculator",
+    version: "1.0.0",
+    
+    // Basic arithmetic operations
+    add: fn(a, b) {
+        return a + b;
+    },
+    
+    subtract: fn(a, b) {
+        return a - b;
+    },
+    
+    multiply: fn(a, b) {
+        return a * b;
+    },
+    
+    divide: fn(a, b) {
+        if (b == 0) {
+            print("Error: Division by zero!");
+            return null;
+        }
+        return a / b;
+    },
+    
+    // Advanced operations
+    power: fn(base, exponent) {
+        let result = 1;
+        let i = 0;
+        while (i < exponent) {
+            result = result * base;
+            i = i + 1;
+        }
+        return result;
+    },
+    
+    // Calculate factorial
+    factorial: fn(n) {
+        if (n <= 1) {
+            return 1;
+        }
+        return n * calculator.factorial(n - 1);
+    },
+    
+    // Calculate sum of array
+    sum: fn(numbers) {
+        let total = 0;
+        let i = 0;
+        while (i < len(numbers)) {
+            total = total + numbers[i];
+            i = i + 1;
+        }
+        return total;
+    },
+    
+    // Calculate average of array
+    average: fn(numbers) {
+        if (len(numbers) == 0) {
+            return 0;
+        }
+        return calculator.sum(numbers) / len(numbers);
+    }
+};
+
+// Function to demonstrate calculator usage
+fn demonstrateCalculator() {
+    print("=== " + calculator.name + " v" + calculator.version + " ===");
+    
+    // Basic operations
+    print("Basic Operations:");
+    print("10 + 5 = " + calculator.add(10, 5));
+    print("10 - 5 = " + calculator.subtract(10, 5));
+    print("10 * 5 = " + calculator.multiply(10, 5));
+    print("10 / 5 = " + calculator.divide(10, 5));
+    
+    // Advanced operations
+    print("\nAdvanced Operations:");
+    print("2^8 = " + calculator.power(2, 8));
+    print("5! = " + calculator.factorial(5));
+    
+    // Array operations
+    let numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    print("\nArray Operations:");
+    print("Numbers: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]");
+    print("Sum: " + calculator.sum(numbers));
+    print("Average: " + calculator.average(numbers));
+    
+    // Error handling
+    print("\nError Handling:");
+    let divisionResult = calculator.divide(10, 0);
+    if (divisionResult == null) {
+        print("Division by zero handled gracefully");
+    }
+}
+
+// Function to create a simple expression evaluator
+fn evaluateExpression(operation, a, b) {
+    if (operation == "+") {
+        return calculator.add(a, b);
+    } else if (operation == "-") {
+        return calculator.subtract(a, b);
+    } else if (operation == "*") {
+        return calculator.multiply(a, b);
+    } else if (operation == "/") {
+        return calculator.divide(a, b);
+    } else if (operation == "^") {
+        return calculator.power(a, b);
+    } else {
+        print("Unknown operation: " + operation);
+        return null;
+    }
+}
+
+// Main function
+fn main() {
+    // Demonstrate calculator functionality
+    demonstrateCalculator();
+    
+    // Interactive expression evaluation
+    print("\n=== Expression Evaluator ===");
+    
+    let expressions = [
+        {
+            operation: "+",
+            a: 15,
+            b: 25
+        },
+        {
+            operation: "*",
+            a: 7,
+            b: 8
+        },
+        {
+            operation: "^",
+            a: 3,
+            b: 4
+        }
+    ];
+    
+    let i = 0;
+    while (i < len(expressions)) {
+        let expr = expressions[i];
+        let result = evaluateExpression(expr.operation, expr.a, expr.b);
+        print(expr.a + " " + expr.operation + " " + expr.b + " = " + result);
+        i = i + 1;
+    }
+    
+    return 0;
+}

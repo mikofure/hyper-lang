@@ -1,0 +1,358 @@
+// Hyper System I/O Library - systemio/process/process.hxp
+// Provides process management and system operations
+
+import { HypError, createError } from '../../mikohyper/core.hxp';
+
+module systemio.process.process {
+    // Process types
+    export type ProcessOptions = {
+        cwd?: string,
+        env?: Record<string, string>,
+        shell?: boolean | string,
+        timeout?: number,
+        maxBuffer?: number,
+        encoding?: 'utf8' | 'ascii' | 'base64' | 'binary',
+        stdio?: 'pipe' | 'inherit' | 'ignore' | [string, string, string],
+        detached?: boolean,
+        uid?: number,
+        gid?: number
+    };
+
+    export type ProcessResult = {
+        stdout: string,
+        stderr: string,
+        exitCode: number,
+        signal?: string,
+        killed: boolean,
+        pid?: number
+    };
+
+    export type ProcessInfo = {
+        pid: number,
+        ppid: number,
+        name: string,
+        cmd: string,
+        cpu: number,
+        memory: number,
+        startTime: Date
+    };
+
+    export type SystemInfo = {
+        platform: string,
+        arch: string,
+        version: string,
+        hostname: string,
+        uptime: number,
+        loadAverage: number[],
+        totalMemory: number,
+        freeMemory: number,
+        cpuCount: number
+    };
+
+    export type EnvironmentVariables = Record<string, string>;
+
+    // Process management class
+    export class ProcessManager {
+        // Execute commands
+        async exec(command: string, options?: ProcessOptions): Promise<ProcessResult> {
+            try {
+                if (typeof window !== 'undefined') {
+                    throw createError(
+                        'Process execution not supported in browser environment',
+                        'OPERATION_NOT_SUPPORTED'
+                    );
+                }
+                
+                return await this.execNode(command, options);
+            } catch (error) {
+                throw createError(
+                    `Failed to execute command: ${command}`,
+                    'PROCESS_EXEC_ERROR',
+                    { command, error }
+                );
+            }
+        }
+
+        async spawn(command: string, args: string[] = [], options?: ProcessOptions): Promise<ProcessResult> {
+            try {
+                if (typeof window !== 'undefined') {
+                    throw createError(
+                        'Process spawning not supported in browser environment',
+                        'OPERATION_NOT_SUPPORTED'
+                    );
+                }
+                
+                return await this.spawnNode(command, args, options);
+            } catch (error) {
+                throw createError(
+                    `Failed to spawn process: ${command}`,
+                    'PROCESS_SPAWN_ERROR',
+                    { command, args, error }
+                );
+            }
+        }
+
+        // Process information
+        async getProcessInfo(pid: number): Promise<ProcessInfo> {
+            try {
+                if (typeof window !== 'undefined') {
+                    throw createError(
+                        'Process information not available in browser environment',
+                        'OPERATION_NOT_SUPPORTED'
+                    );
+                }
+                
+                return await this.getProcessInfoNode(pid);
+            } catch (error) {
+                throw createError(
+                    `Failed to get process info for PID: ${pid}`,
+                    'PROCESS_INFO_ERROR',
+                    { pid, error }
+                );
+            }
+        }
+
+        async listProcesses(): Promise<ProcessInfo[]> {
+            try {
+                if (typeof window !== 'undefined') {
+                    throw createError(
+                        'Process listing not available in browser environment',
+                        'OPERATION_NOT_SUPPORTED'
+                    );
+                }
+                
+                return await this.listProcessesNode();
+            } catch (error) {
+                throw createError(
+                    'Failed to list processes',
+                    'PROCESS_LIST_ERROR',
+                    { error }
+                );
+            }
+        }
+
+        async killProcess(pid: number, signal: string = 'SIGTERM'): Promise<void> {
+            try {
+                if (typeof window !== 'undefined') {
+                    throw createError(
+                        'Process killing not supported in browser environment',
+                        'OPERATION_NOT_SUPPORTED'
+                    );
+                }
+                
+                await this.killProcessNode(pid, signal);
+            } catch (error) {
+                throw createError(
+                    `Failed to kill process PID: ${pid}`,
+                    'PROCESS_KILL_ERROR',
+                    { pid, signal, error }
+                );
+            }
+        }
+
+        // System information
+        async getSystemInfo(): Promise<SystemInfo> {
+            try {
+                if (typeof window !== 'undefined') {
+                    return this.getSystemInfoBrowser();
+                } else {
+                    return this.getSystemInfoNode();
+                }
+            } catch (error) {
+                throw createError(
+                    'Failed to get system information',
+                    'SYSTEM_INFO_ERROR',
+                    { error }
+                );
+            }
+        }
+
+        // Environment variables
+        getEnvironmentVariables(): EnvironmentVariables {
+            if (typeof window !== 'undefined') {
+                // Browser environment - limited access
+                return {
+                    USER_AGENT: navigator.userAgent,
+                    LANGUAGE: navigator.language,
+                    PLATFORM: navigator.platform
+                };
+            } else {
+                // Node.js environment
+                return this.getEnvironmentVariablesNode();
+            }
+        }
+
+        getEnvironmentVariable(name: string): string | undefined {
+            const env = this.getEnvironmentVariables();
+            return env[name];
+        }
+
+        setEnvironmentVariable(name: string, value: string): void {
+            if (typeof window !== 'undefined') {
+                throw createError(
+                    'Setting environment variables not supported in browser environment',
+                    'OPERATION_NOT_SUPPORTED'
+                );
+            } else {
+                this.setEnvironmentVariableNode(name, value);
+            }
+        }
+
+        // Current process information
+        getCurrentProcessId(): number {
+            if (typeof window !== 'undefined') {
+                throw createError(
+                    'Process ID not available in browser environment',
+                    'OPERATION_NOT_SUPPORTED'
+                );
+            } else {
+                return this.getCurrentProcessIdNode();
+            }
+        }
+
+        getCurrentWorkingDirectory(): string {
+            if (typeof window !== 'undefined') {
+                return window.location.pathname;
+            } else {
+                return this.getCurrentWorkingDirectoryNode();
+            }
+        }
+
+        changeWorkingDirectory(path: string): void {
+            if (typeof window !== 'undefined') {
+                throw createError(
+                    'Changing working directory not supported in browser environment',
+                    'OPERATION_NOT_SUPPORTED'
+                );
+            } else {
+                this.changeWorkingDirectoryNode(path);
+            }
+        }
+
+        // Process control
+        exit(code: number = 0): void {
+            if (typeof window !== 'undefined') {
+                // Browser environment - close window/tab
+                window.close();
+            } else {
+                // Node.js environment
+                this.exitNode(code);
+            }
+        }
+
+        // Platform-specific implementations (stubs)
+        private async execNode(command: string, options?: ProcessOptions): Promise<ProcessResult> {
+            // Node.js implementation would use child_process.exec
+            throw createError('Node.js process execution not implemented', 'NOT_IMPLEMENTED');
+        }
+
+        private async spawnNode(command: string, args: string[], options?: ProcessOptions): Promise<ProcessResult> {
+            // Node.js implementation would use child_process.spawn
+            throw createError('Node.js process spawning not implemented', 'NOT_IMPLEMENTED');
+        }
+
+        private async getProcessInfoNode(pid: number): Promise<ProcessInfo> {
+            // Node.js implementation would use ps or similar
+            throw createError('Node.js process info not implemented', 'NOT_IMPLEMENTED');
+        }
+
+        private async listProcessesNode(): Promise<ProcessInfo[]> {
+            // Node.js implementation would use ps or similar
+            throw createError('Node.js process listing not implemented', 'NOT_IMPLEMENTED');
+        }
+
+        private async killProcessNode(pid: number, signal: string): Promise<void> {
+            // Node.js implementation would use process.kill
+            throw createError('Node.js process killing not implemented', 'NOT_IMPLEMENTED');
+        }
+
+        private async getSystemInfoBrowser(): Promise<SystemInfo> {
+            // Browser implementation using navigator API
+            return {
+                platform: navigator.platform,
+                arch: 'unknown',
+                version: navigator.userAgent,
+                hostname: window.location.hostname,
+                uptime: 0,
+                loadAverage: [],
+                totalMemory: (navigator as any).deviceMemory ? (navigator as any).deviceMemory * 1024 * 1024 * 1024 : 0,
+                freeMemory: 0,
+                cpuCount: navigator.hardwareConcurrency || 1
+            };
+        }
+
+        private async getSystemInfoNode(): Promise<SystemInfo> {
+            // Node.js implementation would use os module
+            throw createError('Node.js system info not implemented', 'NOT_IMPLEMENTED');
+        }
+
+        private getEnvironmentVariablesNode(): EnvironmentVariables {
+            // Node.js implementation would use process.env
+            throw createError('Node.js environment variables not implemented', 'NOT_IMPLEMENTED');
+        }
+
+        private setEnvironmentVariableNode(name: string, value: string): void {
+            // Node.js implementation would set process.env[name]
+            throw createError('Node.js environment variable setting not implemented', 'NOT_IMPLEMENTED');
+        }
+
+        private getCurrentProcessIdNode(): number {
+            // Node.js implementation would use process.pid
+            throw createError('Node.js process ID not implemented', 'NOT_IMPLEMENTED');
+        }
+
+        private getCurrentWorkingDirectoryNode(): string {
+            // Node.js implementation would use process.cwd()
+            throw createError('Node.js working directory not implemented', 'NOT_IMPLEMENTED');
+        }
+
+        private changeWorkingDirectoryNode(path: string): void {
+            // Node.js implementation would use process.chdir()
+            throw createError('Node.js directory change not implemented', 'NOT_IMPLEMENTED');
+        }
+
+        private exitNode(code: number): void {
+            // Node.js implementation would use process.exit()
+            throw createError('Node.js process exit not implemented', 'NOT_IMPLEMENTED');
+        }
+    }
+
+    // Default process manager instance
+    export const process = new ProcessManager();
+
+    // Utility functions
+    export function createProcessManager(): ProcessManager {
+        return new ProcessManager();
+    }
+
+    export function isProcessRunning(pid: number): Promise<boolean> {
+        return process.getProcessInfo(pid)
+            .then(() => true)
+            .catch(() => false);
+    }
+
+    export async function executeCommand(command: string, options?: ProcessOptions): Promise<string> {
+        const result = await process.exec(command, options);
+        if (result.exitCode !== 0) {
+            throw createError(
+                `Command failed with exit code ${result.exitCode}`,
+                'COMMAND_FAILED',
+                { command, exitCode: result.exitCode, stderr: result.stderr }
+            );
+        }
+        return result.stdout;
+    }
+
+    export async function executeCommandSafe(command: string, options?: ProcessOptions): Promise<ProcessResult> {
+        try {
+            return await process.exec(command, options);
+        } catch (error) {
+            return {
+                stdout: '',
+                stderr: error.message || 'Unknown error',
+                exitCode: -1,
+                killed: false
+            };
+        }
+    }
+}

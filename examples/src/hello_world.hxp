@@ -1,0 +1,36 @@
+/**
+ * Hello World Example - Hyper Programming Language
+ * 
+ * This is a simple "Hello, World!" program demonstrating basic Hyper syntax.
+ */
+
+// Function to greet someone
+fn greet(name) {
+    return "Hello, " + name + "!";
+}
+
+// Main function - entry point for CLI applications
+fn main() {
+    // Variable declarations
+    let message = greet("World");
+    let count = 5;
+    
+    // Print the greeting
+    print(message);
+    
+    // Loop example
+    let i = 0;
+    while (i < count) {
+        print("Count: " + i);
+        i = i + 1;
+    }
+    
+    // Conditional example
+    if (count > 3) {
+        print("Count is greater than 3");
+    } else {
+        print("Count is 3 or less");
+    }
+    
+    return 0;
+}

@@ -1,0 +1,458 @@
+/**
+ * Todo App Example - Hyper Programming Language
+ * 
+ * Demonstrates web/GUI application development with state management,
+ * event handling, and virtual DOM concepts.
+ */
+
+// Import virtual DOM and state management (conceptual)
+import { createElement, render, useState, useEffect } from "hyp:dom";
+import { createState, updateState } from "hyp:state";
+
+// Todo item structure
+let TodoItem = {
+    create: fn(id, text, completed) {
+        return {
+            id: id,
+            text: text,
+            completed: completed || false,
+            createdAt: Date.now() // Conceptual
+        };
+    }
+};
+
+// Todo application state
+let todoState = {
+    todos: [],
+    nextId: 1,
+    filter: "all", // "all", "active", "completed"
+    
+    // Add a new todo
+    addTodo: fn(text) {
+        if (text && len(text) > 0) {
+            let newTodo = TodoItem.create(todoState.nextId, text, false);
+            todoState.todos[len(todoState.todos)] = newTodo;
+            todoState.nextId = todoState.nextId + 1;
+        }
+    },
+    
+    // Toggle todo completion
+    toggleTodo: fn(id) {
+        let i = 0;
+        while (i < len(todoState.todos)) {
+            if (todoState.todos[i].id == id) {
+                todoState.todos[i].completed = !todoState.todos[i].completed;
+                break;
+            }
+            i = i + 1;
+        }
+    },
+    
+    // Remove a todo
+    removeTodo: fn(id) {
+        let newTodos = [];
+        let i = 0;
+        while (i < len(todoState.todos)) {
+            if (todoState.todos[i].id != id) {
+                newTodos[len(newTodos)] = todoState.todos[i];
+            }
+            i = i + 1;
+        }
+        todoState.todos = newTodos;
+    },
+    
+    // Get filtered todos
+    getFilteredTodos: fn() {
+        if (todoState.filter == "active") {
+            return todoState.getActiveTodos();
+        } else if (todoState.filter == "completed") {
+            return todoState.getCompletedTodos();
+        }
+        return todoState.todos;
+    },
+    
+    // Get active todos
+    getActiveTodos: fn() {
+        let activeTodos = [];
+        let i = 0;
+        while (i < len(todoState.todos)) {
+            if (!todoState.todos[i].completed) {
+                activeTodos[len(activeTodos)] = todoState.todos[i];
+            }
+            i = i + 1;
+        }
+        return activeTodos;
+    },
+    
+    // Get completed todos
+    getCompletedTodos: fn() {
+        let completedTodos = [];
+        let i = 0;
+        while (i < len(todoState.todos)) {
+            if (todoState.todos[i].completed) {
+                completedTodos[len(completedTodos)] = todoState.todos[i];
+            }
+            i = i + 1;
+        }
+        return completedTodos;
+    },
+    
+    // Clear completed todos
+    clearCompleted: fn() {
+        todoState.todos = todoState.getActiveTodos();
+    }
+};
+
+// Event handlers
+let handlers = {
+    onAddTodo: fn(text) {
+        todoState.addTodo(text);
+        render(); // Re-render the app
+    },
+    
+    onToggleTodo: fn(id) {
+        todoState.toggleTodo(id);
+        render(); // Re-render the app
+    },
+    
+    onRemoveTodo: fn(id) {
+        todoState.removeTodo(id);
+        render(); // Re-render the app
+    },
+    
+    onFilterChange: fn(filter) {
+        todoState.filter = filter;
+        render(); // Re-render the app
+    },
+    
+    onClearCompleted: fn() {
+        todoState.clearCompleted();
+        render(); // Re-render the app
+    }
+};
+
+// Component: Todo Item
+fn TodoItemComponent(todo) {
+    return (
+        <div className={"todo-item" + (todo.completed ? " completed" : "")}>
+            <input 
+                type="checkbox" 
+                checked={todo.completed}
+                onChange={() => handlers.onToggleTodo(todo.id)}
+            />
+            <span className="todo-text">{todo.text}</span>
+            <button 
+                className="remove-btn"
+                onClick={() => handlers.onRemoveTodo(todo.id)}
+            >
+                ×
+            </button>
+        </div>
+    );
+}
+
+// Component: Todo List
+fn TodoListComponent() {
+    let filteredTodos = todoState.getFilteredTodos();
+    
+    return (
+        <div className="todo-list">
+            {filteredTodos.map(todo => TodoItemComponent(todo))}
+        </div>
+    );
+}
+
+// Component: Add Todo Form
+fn AddTodoComponent() {
+    return (
+        <form 
+            className="add-todo-form"
+            onSubmit={(event) => {
+                event.preventDefault();
+                let input = event.target.querySelector("input");
+                if (input.value) {
+                    handlers.onAddTodo(input.value);
+                    input.value = "";
+                }
+            }}
+        >
+            <input 
+                type="text"
+                placeholder="What needs to be done?"
+                className="todo-input"
+            />
+            <button 
+                type="submit"
+                className="add-btn"
+            >
+                Add Todo
+            </button>
+        </form>
+    );
+}
+
+// Component: Filter Buttons
+fn FilterComponent() {
+    let filters = ["all", "active", "completed"];
+    
+    return (
+        <div className="filters">
+            {filters.map(filter => (
+                <button 
+                    className={"filter-btn" + (todoState.filter == filter ? " active" : "")}
+                    onClick={() => handlers.onFilterChange(filter)}
+                >
+                    {filter}
+                </button>
+            ))}
+        </div>
+    );
+}
+
+// Component: Stats
+fn StatsComponent() {
+    let totalTodos = len(todoState.todos);
+    let activeTodos = len(todoState.getActiveTodos());
+    let completedTodos = len(todoState.getCompletedTodos());
+    
+    return (
+        <div className="stats">
+            <span>Total: {totalTodos}</span>
+            <span>Active: {activeTodos}</span>
+            <span>Completed: {completedTodos}</span>
+            <button 
+                className="clear-completed-btn"
+                onClick={handlers.onClearCompleted}
+                disabled={completedTodos == 0}
+            >
+                Clear Completed
+            </button>
+        </div>
+    );
+}
+
+// Main App Component
+fn AppComponent() {
+    return (
+        <div className="todo-app">
+            <h1>Hyper Todo App</h1>
+            {AddTodoComponent()}
+            {TodoListComponent()}
+            {FilterComponent()}
+            {StatsComponent()}
+        </div>
+    );
+}
+
+// Render function (conceptual)
+fn render() {
+    let app = AppComponent();
+    // In a real implementation, this would update the DOM
+    print("Rendering app with " + len(todoState.todos) + " todos");
+}
+
+// Initialize app with sample data
+fn initializeApp() {
+    todoState.addTodo("Learn Hyper programming language");
+    todoState.addTodo("Build a todo app");
+    todoState.addTodo("Write comprehensive tests");
+    
+    // Mark first todo as completed
+    todoState.toggleTodo(1);
+}
+
+fn TodoAppWithJSX() {
+    state counter = 0;
+    state newTodoText = "";
+    
+    return (
+        <div className="todo-app">
+            <header className="app-header">
+                <h1>Hyper Todo App</h1>
+                <p>Built with JSX-like syntax</p>
+            </header>
+            
+            <main className="app-main">
+                <form className="add-todo-form" onSubmit={() => jsxHandlers.handleAddTodo(event)}>
+                    <input 
+                        type="text" 
+                        className="todo-input"
+                        placeholder="What needs to be done?"
+                        value={newTodoText}
+                        onInput={() => newTodoText = event.target.value}
+                    />
+                    <button type="submit" className="add-btn">
+                        Add Todo
+                    </button>
+                </form>
+                
+                <div className="todo-list">
+                    {todoState.getFilteredTodos().map(todo => (
+                        <div className={"todo-item" + (todo.completed ? " completed" : "")} key={todo.id}>
+                            <input 
+                                type="checkbox" 
+                                checked={todo.completed}
+                                onChange={() => handlers.onToggleTodo(todo.id)}
+                            />
+                            <span className="todo-text">{todo.text}</span>
+                            <button 
+                                className="remove-btn"
+                                onClick={() => handlers.onRemoveTodo(todo.id)}
+                            >
+                                ×
+                            </button>
+                        </div>
+                    ))}
+                </div>
+                
+                <div className="app-controls">
+                    <div className="filters">
+                        <button 
+                            className={"filter-btn" + (todoState.filter == "all" ? " active" : "")}
+                            onClick={() => handlers.onFilterChange('all')}
+                        >
+                            All
+                        </button>
+                        <button 
+                            className={"filter-btn" + (todoState.filter == "active" ? " active" : "")}
+                            onClick={() => handlers.onFilterChange('active')}
+                        >
+                            Active
+                        </button>
+                        <button 
+                            className={"filter-btn" + (todoState.filter == "completed" ? " active" : "")}
+                            onClick={() => handlers.onFilterChange('completed')}
+                        >
+                            Completed
+                        </button>
+                    </div>
+                    
+                    <div className="stats">
+                        <span>Total: {len(todoState.todos)}</span>
+                        <span>Active: {len(todoState.getActiveTodos())}</span>
+                        <span>Completed: {len(todoState.getCompletedTodos())}</span>
+                        <button 
+                            className="clear-completed-btn"
+                            onClick={() => handlers.onClearCompleted()}
+                            disabled={len(todoState.getCompletedTodos()) == 0}
+                        >
+                            Clear Completed
+                        </button>
+                    </div>
+                </div>
+            </main>
+            
+            <footer className="app-footer">
+                <p>Counter example: {counter}</p>
+                <button onClick={() => counter = counter + 1}>Increment</button>
+                <button onClick={() => counter = counter - 1}>Decrement</button>
+                <button onClick={() => counter = 0}>Reset</button>
+            </footer>
+        </div>
+    );
+}
+
+// Enhanced event handlers for JSX syntax
+let jsxHandlers = {
+    handleAddTodo: fn(event) {
+        event.preventDefault();
+        let input = event.target.querySelector('.todo-input');
+        if (input.value && len(input.value) > 0) {
+            todoState.addTodo(input.value);
+            input.value = "";
+            renderJSX();
+        }
+    },
+    
+    handleKeyPress: fn(event) {
+        if (event.key == "Enter") {
+            jsxHandlers.handleAddTodo(event);
+        }
+    }
+};
+
+// JSX render function
+fn renderJSX() {
+    let app = TodoAppWithJSX();
+    // Mount to DOM (conceptual)
+    // document.getElementById('app').innerHTML = app;
+    print("JSX App rendered with " + len(todoState.todos) + " todos");
+}
+
+// Simple counter example with JSX
+fn CounterApp() {
+    state counter = 0;
+    
+    return (
+        <div className="counter-app">
+            <h2>Simple Counter</h2>
+            <div className="counter-display">
+                <span className="counter-value">{counter}</span>
+            </div>
+            <div className="counter-controls">
+                <button onClick={() => counter = counter - 1} className="btn btn-danger">
+                    -
+                </button>
+                <button onClick={() => counter = 0} className="btn btn-secondary">
+                    Reset
+                </button>
+                <button onClick={() => counter = counter + 1} className="btn btn-success">
+                    +
+                </button>
+            </div>
+            <div className="counter-info">
+                <p>Current value: {counter}</p>
+                <p>Is even: {counter % 2 == 0 ? "Yes" : "No"}</p>
+                <p>Is positive: {counter > 0 ? "Yes" : "No"}</p>
+            </div>
+        </div>
+    );
+}
+
+// Main function for web app
+fn main() {
+    print("=== Hyper Todo App ===");
+    
+    // Initialize the app
+    initializeApp();
+    
+    // Simulate user interactions with traditional components
+    print("\nTraditional component rendering:");
+    render();
+    
+    print("\nAdding a new todo...");
+    handlers.onAddTodo("Deploy to production");
+    
+    print("\nToggling todo completion...");
+    handlers.onToggleTodo(2);
+    
+    print("\nFiltering active todos...");
+    handlers.onFilterChange("active");
+    
+    print("\nFiltering completed todos...");
+    handlers.onFilterChange("completed");
+    
+    print("\nShowing all todos...");
+    handlers.onFilterChange("all");
+    
+    print("\nClearing completed todos...");
+    handlers.onClearCompleted();
+    
+    // Display final stats
+    let stats = StatsComponent();
+    print("\nFinal stats:");
+    print("Total todos: " + len(todoState.todos));
+    print("Active todos: " + len(todoState.getActiveTodos()));
+    print("Completed todos: " + len(todoState.getCompletedTodos()));
+    
+    // Demonstrate JSX syntax
+    print("\n=== JSX Syntax Demo ===");
+    renderJSX();
+    
+    // Demonstrate counter app
+    print("\n=== Counter App Demo ===");
+    let counterApp = CounterApp();
+    print("Counter app component created");
+    
+    return 0;
+}

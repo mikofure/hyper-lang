@@ -1,0 +1,316 @@
+# Hyper Programming Language Package Manifest
+# This file defines package metadata, dependencies, and scripts
+
+name: "hyper-example-project"
+version: "1.0.0"
+description: "Example project demonstrating Hyper programming language features"
+author: "Hyper Language Team"
+license: "MIT"
+homepage: "https://github.com/hyper-lang/examples"
+repository: "https://github.com/hyper-lang/examples.git"
+keywords:
+  - "hyper"
+  - "programming-language"
+  - "example"
+  - "demo"
+
+# Main entry points
+main: "src/main.hxp"          # CLI entry point
+web: "src/web.hxp"            # Web/GUI entry point
+api: "src/api.hxp"            # Backend/API entry point
+
+# Hyper language version requirement
+hyper: "^0.1.0"
+
+# Dependencies
+dependencies:
+  # Core utilities
+  "@hyper/core":
+    version: "^1.0.0"
+    description: "Core Hyper language utilities"
+  
+  "@hyper/http":
+    version: "^0.5.0"
+    description: "HTTP client and server utilities"
+  
+  "@hyper/json":
+    version: "^0.3.0"
+    description: "JSON parsing and serialization"
+  
+  # Math and utilities
+  "lodash-hyp":
+    version: "^2.1.0"
+    description: "Utility functions for Hyper"
+  
+  "math-utils":
+    version: "^1.2.0"
+    description: "Mathematical utility functions"
+
+# Development dependencies
+devDependencies:
+  # Testing framework
+  "@hyper/test":
+    version: "^0.4.0"
+    description: "Testing framework for Hyper"
+  
+  # Linting and formatting
+  "@hyper/lint":
+    version: "^0.2.0"
+    description: "Code linting for Hyper"
+  
+  "@hyper/format":
+    version: "^0.1.0"
+    description: "Code formatting for Hyper"
+  
+  # Build tools
+  "@hyper/build":
+    version: "^0.6.0"
+    description: "Build system for Hyper projects"
+  
+  "@hyper/bundle":
+    version: "^0.3.0"
+    description: "Bundler for web applications"
+
+# Optional dependencies
+optionalDependencies:
+  "@hyper/database":
+    version: "^0.4.0"
+    description: "Database connectivity"
+  
+  "@hyper/crypto":
+    version: "^0.2.0"
+    description: "Cryptographic utilities"
+
+# Peer dependencies (expected to be provided by the environment)
+peerDependencies:
+  "@hyper/runtime":
+    version: "^0.1.0"
+    description: "Hyper runtime environment"
+
+# Scripts for common tasks
+scripts:
+  # Development
+  "dev": "hyprun src/main.hxp --watch"
+  "dev:web": "hyprun src/web.hxp --watch --port 3000"
+  "dev:api": "hyprun src/api.hxp --watch --port 8000"
+  
+  # Building
+  "build": "hypc build src/main.hxp --output build/"
+  "build:web": "hypc build src/web.hxp --target js --output build/web/"
+  "build:cli": "hypc build src/main.hxp --target c --output build/cli/"
+  "build:api": "hypc build src/api.hxp --target c --output build/api/"
+  
+  # Testing
+  "test": "@hyper/test tests/"
+  "test:unit": "@hyper/test tests/unit/"
+  "test:integration": "@hyper/test tests/integration/"
+  "test:watch": "@hyper/test tests/ --watch"
+  
+  # Code quality
+  "lint": "@hyper/lint src/"
+  "lint:fix": "@hyper/lint src/ --fix"
+  "format": "@hyper/format src/"
+  "format:check": "@hyper/format src/ --check"
+  
+  # Deployment
+  "start": "hyprun build/main"
+  "start:web": "hyprun build/web/main.js --port 3000"
+  "start:api": "hyprun build/api/main --port 8000"
+  
+  # Utilities
+  "clean": "rm -rf build/ .hypkg/cache/"
+  "install": "hpm install"
+  "update": "hpm update"
+  "audit": "hpm audit"
+  
+  # Custom scripts
+  "setup": "hpm install && hypc build src/main.hxp"
+  "deploy": "npm run build && npm run test && ./deploy.sh"
+  "docs": "@hyper/docs generate src/ --output docs/"
+
+# Build configuration
+build:
+  # Output directory
+  outDir: "build"
+  
+  # Source directory
+  srcDir: "src"
+  
+  # Include patterns
+  include:
+    - "src/**/*.hxp"
+    - "assets/**/*"
+  
+  # Exclude patterns
+  exclude:
+    - "**/*.test.hxp"
+    - "**/*.spec.hxp"
+    - "tests/**/*"
+  
+  # Compiler options
+  compiler:
+    target: "c"              # Default target language
+    optimization: "O2"       # Optimization level
+    debug: false             # Include debug information
+    warnings: true           # Show compiler warnings
+    strict: true             # Strict mode
+  
+  # Bundler options (for web targets)
+  bundler:
+    minify: true             # Minify output
+    sourceMaps: true         # Generate source maps
+    treeshaking: true        # Remove unused code
+    splitting: true          # Code splitting
+
+# Test configuration
+test:
+  # Test directory
+  testDir: "tests"
+  
+  # Test patterns
+  testMatch:
+    - "**/*.test.hxp"
+    - "**/*.spec.hxp"
+  
+  # Coverage settings
+  coverage:
+    enabled: true
+    threshold: 80            # Minimum coverage percentage
+    include:
+      - "src/**/*.hxp"
+    exclude:
+      - "src/**/*.test.hxp"
+  
+  # Test environment
+  environment: "node"        # or "browser", "hybrid"
+  
+  # Setup files
+  setupFiles:
+    - "tests/setup.hxp"
+
+# Linting configuration
+lint:
+  # Rules
+  rules:
+    "no-unused-vars": "error"
+    "no-console": "warn"
+    "prefer-const": "error"
+    "semicolon": "always"
+  
+  # Ignore patterns
+  ignore:
+    - "build/**/*"
+    - "node_modules/**/*"
+    - "*.min.hxp"
+
+# Formatting configuration
+format:
+  # Style options
+  indentSize: 4
+  indentType: "spaces"       # or "tabs"
+  maxLineLength: 100
+  trailingComma: true
+  singleQuote: false
+  
+  # File patterns
+  include:
+    - "src/**/*.hxp"
+    - "tests/**/*.hxp"
+  
+  exclude:
+    - "build/**/*"
+    - "*.min.hxp"
+
+# Documentation configuration
+docs:
+  # Output directory
+  outDir: "docs"
+  
+  # Include patterns
+  include:
+    - "src/**/*.hxp"
+    - "README.md"
+  
+  # Theme
+  theme: "default"
+  
+  # Options
+  options:
+    includePrivate: false
+    generateIndex: true
+    generateSearch: true
+
+# Package metadata
+metadata:
+  # Supported platforms
+  platforms:
+    - "linux"
+    - "macos"
+    - "windows"
+  
+  # Supported architectures
+  architectures:
+    - "x64"
+    - "arm64"
+  
+  # Minimum system requirements
+  requirements:
+    memory: "512MB"
+    disk: "100MB"
+    hyper: "^0.1.0"
+  
+  # Categories
+  categories:
+    - "development"
+    - "utilities"
+    - "examples"
+  
+  # Badges
+  badges:
+    - name: "build"
+      url: "https://github.com/hyper-lang/examples/actions"
+    - name: "coverage"
+      url: "https://codecov.io/gh/hyper-lang/examples"
+    - name: "license"
+      url: "https://opensource.org/licenses/MIT"
+
+# Publishing configuration
+publish:
+  # Registry
+  registry: "https://registry.hyper-lang.org"
+  
+  # Access level
+  access: "public"           # or "private"
+  
+  # Files to include in package
+  files:
+    - "src/"
+    - "build/"
+    - "README.md"
+    - "LICENSE"
+    - "package.yml"
+  
+  # Files to exclude
+  ignore:
+    - "tests/"
+    - "docs/"
+    - "*.log"
+    - ".git/"
+    - ".hypkg/cache/"
+
+# Environment variables
+env:
+  development:
+    DEBUG: "true"
+    LOG_LEVEL: "debug"
+    API_URL: "http://localhost:8000"
+  
+  production:
+    DEBUG: "false"
+    LOG_LEVEL: "info"
+    API_URL: "https://api.example.com"
+  
+  test:
+    DEBUG: "false"
+    LOG_LEVEL: "silent"
+    API_URL: "http://localhost:8001"

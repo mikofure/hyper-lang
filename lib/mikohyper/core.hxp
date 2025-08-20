@@ -1,0 +1,178 @@
+// Hyper Core Library - mikohyper/core.hxp
+// Provides fundamental runtime functionality for Hyper applications
+
+module mikohyper.core {
+    // Core data types and utilities
+    export type HypValue = {
+        type: string,
+        value: any,
+        metadata?: object
+    };
+
+    export type HypFunction = {
+        name: string,
+        params: string[],
+        body: () => any,
+        async?: boolean
+    };
+
+    export type HypModule = {
+        name: string,
+        exports: object,
+        dependencies: string[]
+    };
+
+    // Runtime utilities
+    export function createValue(type: string, value: any, metadata?: object): HypValue {
+        return {
+            type,
+            value,
+            metadata: metadata || {}
+        };
+    }
+
+    export function isType(value: HypValue, expectedType: string): boolean {
+        return value.type === expectedType;
+    }
+
+    export function typeOf(value: any): string {
+        if (value === null) return 'null';
+        if (value === undefined) return 'undefined';
+        if (Array.isArray(value)) return 'array';
+        return typeof value;
+    }
+
+    // Memory management
+    export class MemoryManager {
+        private refs: Map<string, any> = new Map();
+        private refCount: Map<string, number> = new Map();
+
+        addRef(id: string, value: any): void {
+            this.refs.set(id, value);
+            const count = this.refCount.get(id) || 0;
+            this.refCount.set(id, count + 1);
+        }
+
+        removeRef(id: string): void {
+            const count = this.refCount.get(id) || 0;
+            if (count <= 1) {
+                this.refs.delete(id);
+                this.refCount.delete(id);
+            } else {
+                this.refCount.set(id, count - 1);
+            }
+        }
+
+        getRef(id: string): any {
+            return this.refs.get(id);
+        }
+
+        cleanup(): void {
+            this.refs.clear();
+            this.refCount.clear();
+        }
+    }
+
+    // Error handling
+    export class HypError extends Error {
+        constructor(
+            message: string,
+            public code: string,
+            public context?: object
+        ) {
+            super(message);
+            this.name = 'HypError';
+        }
+    }
+
+    export function createError(message: string, code: string, context?: object): HypError {
+        return new HypError(message, code, context);
+    }
+
+    // Module system
+    export class ModuleRegistry {
+        private modules: Map<string, HypModule> = new Map();
+        private loading: Set<string> = new Set();
+
+        async loadModule(name: string, loader: () => Promise<HypModule>): Promise<HypModule> {
+            if (this.modules.has(name)) {
+                return this.modules.get(name)!;
+            }
+
+            if (this.loading.has(name)) {
+                throw createError(`Circular dependency detected: ${name}`, 'CIRCULAR_DEPENDENCY');
+            }
+
+            this.loading.add(name);
+            try {
+                const module = await loader();
+                this.modules.set(name, module);
+                this.loading.delete(name);
+                return module;
+            } catch (error) {
+                this.loading.delete(name);
+                throw error;
+            }
+        }
+
+        getModule(name: string): HypModule | undefined {
+            return this.modules.get(name);
+        }
+
+        hasModule(name: string): boolean {
+            return this.modules.has(name);
+        }
+    }
+
+    // Global instances
+    export const memoryManager = new MemoryManager();
+    export const moduleRegistry = new ModuleRegistry();
+
+    // Utility functions
+    export function deepClone(obj: any): any {
+        if (obj === null || typeof obj !== 'object') return obj;
+        if (obj instanceof Date) return new Date(obj.getTime());
+        if (obj instanceof Array) return obj.map(item => deepClone(item));
+        if (typeof obj === 'object') {
+            const cloned: any = {};
+            for (const key in obj) {
+                if (obj.hasOwnProperty(key)) {
+                    cloned[key] = deepClone(obj[key]);
+                }
+            }
+            return cloned;
+        }
+        return obj;
+    }
+
+    export function merge(target: object, ...sources: object[]): object {
+        const result = deepClone(target);
+        for (const source of sources) {
+            Object.assign(result, source);
+        }
+        return result;
+    }
+
+    export function debounce(func: Function, wait: number): Function {
+        let timeout: any;
+        return function executedFunction(...args: any[]) {
+            const later = () => {
+                clearTimeout(timeout);
+                func(...args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+        };
+    }
+
+    export function throttle(func: Function, limit: number): Function {
+        let inThrottle: boolean;
+        return function executedFunction(...args: any[]) {
+            if (!inThrottle) {
+                func.apply(this, args);
+                inThrottle = true;
+                setTimeout(() => inThrottle = false, limit);
+            }
+        };
+    }
+}

@@ -1,0 +1,247 @@
+// Hyper GUI Library - gui/components.hxp
+// Provides UI components and rendering utilities
+
+import { HypValue, createValue, HypError, createError } from '../mikohyper/core.hxp';
+
+module gui.components {
+    // Component base types
+    export type ComponentProps = {
+        [key: string]: any,
+        children?: Component[],
+        className?: string,
+        id?: string,
+        style?: CSSProperties
+    };
+
+    export type CSSProperties = {
+        [property: string]: string | number
+    };
+
+    export type Component = {
+        type: string,
+        props: ComponentProps,
+        children: Component[],
+        key?: string,
+        ref?: any
+    };
+
+    export type EventHandler = (event: Event) => void;
+
+    // Core component creation
+    export function createElement(
+        type: string,
+        props: ComponentProps | null,
+        ...children: (Component | string | number)[]
+    ): Component {
+        const normalizedChildren = children
+            .flat()
+            .filter(child => child !== null && child !== undefined)
+            .map(child => {
+                if (typeof child === 'string' || typeof child === 'number') {
+                    return createTextNode(String(child));
+                }
+                return child as Component;
+            });
+
+        return {
+            type,
+            props: props || {},
+            children: normalizedChildren,
+            key: props?.key,
+            ref: props?.ref
+        };
+    }
+
+    export function createTextNode(text: string): Component {
+        return {
+            type: 'TEXT_NODE',
+            props: { nodeValue: text },
+            children: []
+        };
+    }
+
+    // Built-in HTML components
+    export function div(props?: ComponentProps, ...children: Component[]): Component {
+        return createElement('div', props, ...children);
+    }
+
+    export function span(props?: ComponentProps, ...children: Component[]): Component {
+        return createElement('span', props, ...children);
+    }
+
+    export function button(props?: ComponentProps, ...children: Component[]): Component {
+        return createElement('button', props, ...children);
+    }
+
+    export function input(props?: ComponentProps): Component {
+        return createElement('input', props);
+    }
+
+    export function form(props?: ComponentProps, ...children: Component[]): Component {
+        return createElement('form', props, ...children);
+    }
+
+    export function h1(props?: ComponentProps, ...children: Component[]): Component {
+        return createElement('h1', props, ...children);
+    }
+
+    export function h2(props?: ComponentProps, ...children: Component[]): Component {
+        return createElement('h2', props, ...children);
+    }
+
+    export function h3(props?: ComponentProps, ...children: Component[]): Component {
+        return createElement('h3', props, ...children);
+    }
+
+    export function p(props?: ComponentProps, ...children: Component[]): Component {
+        return createElement('p', props, ...children);
+    }
+
+    export function ul(props?: ComponentProps, ...children: Component[]): Component {
+        return createElement('ul', props, ...children);
+    }
+
+    export function li(props?: ComponentProps, ...children: Component[]): Component {
+        return createElement('li', props, ...children);
+    }
+
+    export function img(props?: ComponentProps): Component {
+        return createElement('img', props);
+    }
+
+    export function a(props?: ComponentProps, ...children: Component[]): Component {
+        return createElement('a', props, ...children);
+    }
+
+    // Component utilities
+    export function cloneElement(element: Component, props?: ComponentProps, ...children: Component[]): Component {
+        return {
+            ...element,
+            props: { ...element.props, ...props },
+            children: children.length > 0 ? children : element.children
+        };
+    }
+
+    export function isValidElement(element: any): element is Component {
+        return element && typeof element === 'object' && element.type && element.props;
+    }
+
+    // Event system
+    export class EventEmitter {
+        private listeners: Map<string, EventHandler[]> = new Map();
+
+        on(event: string, handler: EventHandler): void {
+            if (!this.listeners.has(event)) {
+                this.listeners.set(event, []);
+            }
+            this.listeners.get(event)!.push(handler);
+        }
+
+        off(event: string, handler: EventHandler): void {
+            const handlers = this.listeners.get(event);
+            if (handlers) {
+                const index = handlers.indexOf(handler);
+                if (index > -1) {
+                    handlers.splice(index, 1);
+                }
+            }
+        }
+
+        emit(event: string, data: any): void {
+            const handlers = this.listeners.get(event);
+            if (handlers) {
+                handlers.forEach(handler => {
+                    try {
+                        handler(data);
+                    } catch (error) {
+                        console.error(`Error in event handler for ${event}:`, error);
+                    }
+                });
+            }
+        }
+
+        removeAllListeners(event?: string): void {
+            if (event) {
+                this.listeners.delete(event);
+            } else {
+                this.listeners.clear();
+            }
+        }
+    }
+
+    // CSS utilities
+    export function css(styles: CSSProperties): string {
+        return Object.entries(styles)
+            .map(([property, value]) => {
+                const kebabProperty = property.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`);
+                return `${kebabProperty}: ${value}`;
+            })
+            .join('; ');
+    }
+
+    export function classNames(...classes: (string | undefined | null | false)[]): string {
+        return classes
+            .filter(Boolean)
+            .join(' ');
+    }
+
+    // Animation utilities
+    export type AnimationConfig = {
+        duration: number,
+        easing?: string,
+        delay?: number,
+        iterations?: number,
+        direction?: 'normal' | 'reverse' | 'alternate' | 'alternate-reverse',
+        fillMode?: 'none' | 'forwards' | 'backwards' | 'both'
+    };
+
+    export function animate(
+        element: HTMLElement,
+        keyframes: Keyframe[],
+        config: AnimationConfig
+    ): Animation {
+        return element.animate(keyframes, {
+            duration: config.duration,
+            easing: config.easing || 'ease',
+            delay: config.delay || 0,
+            iterations: config.iterations || 1,
+            direction: config.direction || 'normal',
+            fill: config.fillMode || 'none'
+        });
+    }
+
+    // Layout utilities
+    export function flexbox(props: {
+        direction?: 'row' | 'column' | 'row-reverse' | 'column-reverse',
+        wrap?: 'nowrap' | 'wrap' | 'wrap-reverse',
+        justify?: 'flex-start' | 'flex-end' | 'center' | 'space-between' | 'space-around' | 'space-evenly',
+        align?: 'stretch' | 'flex-start' | 'flex-end' | 'center' | 'baseline',
+        gap?: string | number
+    }): CSSProperties {
+        return {
+            display: 'flex',
+            flexDirection: props.direction || 'row',
+            flexWrap: props.wrap || 'nowrap',
+            justifyContent: props.justify || 'flex-start',
+            alignItems: props.align || 'stretch',
+            gap: props.gap ? String(props.gap) : undefined
+        };
+    }
+
+    export function grid(props: {
+        columns?: string,
+        rows?: string,
+        gap?: string | number,
+        columnGap?: string | number,
+        rowGap?: string | number
+    }): CSSProperties {
+        return {
+            display: 'grid',
+            gridTemplateColumns: props.columns,
+            gridTemplateRows: props.rows,
+            gap: props.gap ? String(props.gap) : undefined,
+            columnGap: props.columnGap ? String(props.columnGap) : undefined,
+            rowGap: props.rowGap ? String(props.rowGap) : undefined
+        };
+    }
+}
