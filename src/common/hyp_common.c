@@ -82,7 +82,12 @@ hyp_string_t hyp_string_create(const char* str) {
     string.data = HYP_MALLOC(string.capacity);
     
     if (string.data) {
-        strcpy(string.data, str);
+#ifdef _MSC_VER
+        strcpy_s(string.data, string.capacity, str);
+#else
+        strncpy(string.data, str, string.capacity - 1);
+        string.data[string.capacity - 1] = '\0';
+#endif
     } else {
         string.length = 0;
         string.capacity = 0;
@@ -114,7 +119,12 @@ void hyp_string_append(hyp_string_t* str, const char* append) {
         str->capacity = new_capacity;
     }
     
-    strcpy(str->data + str->length, append);
+#ifdef _MSC_VER
+    strcpy_s(str->data + str->length, str->capacity - str->length, append);
+#else
+    strncpy(str->data + str->length, append, str->capacity - str->length - 1);
+    str->data[new_length] = '\0';
+#endif
     str->length = new_length;
 }
 

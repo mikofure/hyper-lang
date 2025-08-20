@@ -12,40 +12,65 @@
 #include <string.h>
 #include <math.h>
 
+/* Additional type definitions */
+typedef struct hyp_string {
+    char* chars;
+    size_t length;
+    size_t capacity;
+} hyp_string_t;
+
+typedef struct hyp_array {
+    hyp_value_t* values;
+    size_t count;
+    size_t capacity;
+} hyp_array_t;
+
+typedef struct hyp_native_function {
+    const char* name;
+    hyp_value_t (*function)(hyp_runtime_t* runtime, hyp_value_t* args, size_t arg_count);
+} hyp_native_function_t;
+
 /* Built-in function implementations */
 static hyp_value_t builtin_print(hyp_runtime_t* runtime, hyp_value_t* args, size_t arg_count) {
+    (void)runtime; /* Suppress unused parameter warning */
+    
     for (size_t i = 0; i < arg_count; i++) {
-        if (i > 0) printf(" ");
-        
         switch (args[i].type) {
-            case HYP_VALUE_NULL:
+            case HYP_VAL_NULL:
                 printf("null");
                 break;
-            case HYP_VALUE_BOOLEAN:
-                printf("%s", args[i].as.boolean ? "true" : "false");
+            case HYP_VAL_BOOLEAN:
+                printf("%s", args[i].boolean ? "true" : "false");
                 break;
-            case HYP_VALUE_NUMBER:
-                printf("%.17g", args[i].as.number);
+            case HYP_VAL_NUMBER:
+                printf("%g", args[i].number);
                 break;
-            case HYP_VALUE_STRING:
-                printf("%s", args[i].as.string->chars);
+            case HYP_VAL_STRING:
+                printf("%s", args[i].string ? args[i].string : "(null)");
                 break;
-            case HYP_VALUE_ARRAY:
+            case HYP_VAL_ARRAY:
                 printf("[Array]");
                 break;
-            case HYP_VALUE_OBJECT:
+            case HYP_VAL_OBJECT:
                 printf("[Object]");
                 break;
-            case HYP_VALUE_FUNCTION:
+            case HYP_VAL_FUNCTION:
                 printf("[Function]");
                 break;
-            case HYP_VALUE_NATIVE_FUNCTION:
+            case HYP_VAL_NATIVE_FUNCTION:
                 printf("[Native Function]");
                 break;
+            default:
+                printf("[Unknown]");
+                break;
+        }
+        
+        if (i < arg_count - 1) {
+            printf(" ");
         }
     }
-    printf("\n");
     
+    printf("\n");
     return hyp_value_null();
 }
 
@@ -57,18 +82,18 @@ static hyp_value_t builtin_typeof(hyp_runtime_t* runtime, hyp_value_t* args, siz
     
     const char* type_name;
     switch (args[0].type) {
-        case HYP_VALUE_NULL: type_name = "null"; break;
-        case HYP_VALUE_BOOLEAN: type_name = "boolean"; break;
-        case HYP_VALUE_NUMBER: type_name = "number"; break;
-        case HYP_VALUE_STRING: type_name = "string"; break;
-        case HYP_VALUE_ARRAY: type_name = "array"; break;
-        case HYP_VALUE_OBJECT: type_name = "object"; break;
-        case HYP_VALUE_FUNCTION: type_name = "function"; break;
-        case HYP_VALUE_NATIVE_FUNCTION: type_name = "function"; break;
+        case HYP_VAL_NULL: type_name = "null"; break;
+        case HYP_VAL_BOOLEAN: type_name = "boolean"; break;
+        case HYP_VAL_NUMBER: type_name = "number"; break;
+        case HYP_VAL_STRING: type_name = "string"; break;
+        case HYP_VAL_ARRAY: type_name = "array"; break;
+        case HYP_VAL_OBJECT: type_name = "object"; break;
+        case HYP_VAL_FUNCTION: type_name = "function"; break;
+        case HYP_VAL_NATIVE_FUNCTION: type_name = "function"; break;
         default: type_name = "unknown"; break;
     }
     
-    return hyp_value_string(hyp_string_create(type_name));
+    return hyp_value_string(type_name);
 }
 
 static hyp_value_t builtin_len(hyp_runtime_t* runtime, hyp_value_t* args, size_t arg_count) {
@@ -78,12 +103,12 @@ static hyp_value_t builtin_len(hyp_runtime_t* runtime, hyp_value_t* args, size_t
     }
     
     switch (args[0].type) {
-        case HYP_VALUE_STRING:
-            return hyp_value_number((double)args[0].as.string->length);
-        case HYP_VALUE_ARRAY:
-            return hyp_value_number((double)args[0].as.array->count);
-        case HYP_VALUE_OBJECT:
-            return hyp_value_number((double)args[0].as.object->count);
+        case HYP_VAL_STRING:
+            return hyp_value_number((double)strlen(args[0].string));
+        case HYP_VAL_ARRAY:
+            return hyp_value_number((double)args[0].array.count);
+        case HYP_VAL_OBJECT:
+            return hyp_value_number((double)args[0].object->count);
         default:
             runtime->error = "len can only be called on strings, arrays, or objects";
             return hyp_value_null();
@@ -93,56 +118,65 @@ static hyp_value_t builtin_len(hyp_runtime_t* runtime, hyp_value_t* args, size_t
 /* Value creation functions */
 hyp_value_t hyp_value_null(void) {
     hyp_value_t value;
-    value.type = HYP_VALUE_NULL;
+    value.type = HYP_VAL_NULL;
     return value;
 }
 
 hyp_value_t hyp_value_boolean(bool boolean) {
     hyp_value_t value;
-    value.type = HYP_VALUE_BOOLEAN;
-    value.as.boolean = boolean;
+    value.type = HYP_VAL_BOOLEAN;
+    value.boolean = boolean;
     return value;
 }
 
 hyp_value_t hyp_value_number(double number) {
     hyp_value_t value;
-    value.type = HYP_VALUE_NUMBER;
-    value.as.number = number;
+    value.type = HYP_VAL_NUMBER;
+    value.number = number;
     return value;
 }
 
-hyp_value_t hyp_value_string(hyp_string_t* string) {
+hyp_value_t hyp_value_string(const char* str) {
     hyp_value_t value;
-    value.type = HYP_VALUE_STRING;
-    value.as.string = string;
+    value.type = HYP_VAL_STRING;
+    if (str) {
+        size_t len = strlen(str);
+        value.string = HYP_MALLOC(len + 1);
+        strcpy(value.string, str);
+    } else {
+        value.string = NULL;
+    }
     return value;
 }
 
-hyp_value_t hyp_value_array(hyp_array_t* array) {
+hyp_value_t hyp_value_array(size_t capacity) {
     hyp_value_t value;
-    value.type = HYP_VALUE_ARRAY;
-    value.as.array = array;
+    value.type = HYP_VAL_ARRAY;
+    value.array.elements = capacity > 0 ? HYP_MALLOC(capacity * sizeof(hyp_value_t)) : NULL;
+    value.array.count = 0;
+    value.array.capacity = capacity;
     return value;
 }
 
-hyp_value_t hyp_value_object(hyp_object_t* object) {
+hyp_value_t hyp_value_object(void) {
     hyp_value_t value;
-    value.type = HYP_VALUE_OBJECT;
-    value.as.object = object;
+    value.type = HYP_VAL_OBJECT;
+    value.object = hyp_object_create();
     return value;
 }
 
 hyp_value_t hyp_value_function(hyp_function_t* function) {
     hyp_value_t value;
-    value.type = HYP_VALUE_FUNCTION;
-    value.as.function = function;
+    value.type = HYP_VAL_FUNCTION;
+    value.function = function;
     return value;
 }
 
-hyp_value_t hyp_value_native_function(hyp_native_function_t* native_function) {
+hyp_value_t hyp_value_native_function(const char* name, hyp_value_t (*fn)(hyp_runtime_t*, hyp_value_t*, size_t)) {
     hyp_value_t value;
-    value.type = HYP_VALUE_NATIVE_FUNCTION;
-    value.as.native_function = native_function;
+    value.type = HYP_VAL_NATIVE_FUNCTION;
+    value.native_function.name = name;
+    value.native_function.native_fn = fn;
     return value;
 }
 
@@ -162,7 +196,7 @@ hyp_string_t* hyp_string_create(const char* chars) {
     
     strcpy(string->chars, chars);
     string->length = length;
-    string->hash = 0; /* TODO: Implement hash function */
+    string->capacity = length + 1;
     
     return string;
 }
@@ -375,26 +409,10 @@ hyp_runtime_t* hyp_runtime_create(void) {
     }
     
     /* Define built-in functions */
-    hyp_native_function_t* print_fn = HYP_MALLOC(sizeof(hyp_native_function_t));
-    if (print_fn) {
-        print_fn->name = "print";
-        print_fn->function = builtin_print;
-        hyp_environment_define(runtime->global_env, "print", hyp_value_native_function(print_fn));
-    }
-    
-    hyp_native_function_t* typeof_fn = HYP_MALLOC(sizeof(hyp_native_function_t));
-    if (typeof_fn) {
-        typeof_fn->name = "typeof";
-        typeof_fn->function = builtin_typeof;
-        hyp_environment_define(runtime->global_env, "typeof", hyp_value_native_function(typeof_fn));
-    }
-    
-    hyp_native_function_t* len_fn = HYP_MALLOC(sizeof(hyp_native_function_t));
-    if (len_fn) {
-        len_fn->name = "len";
-        len_fn->function = builtin_len;
-        hyp_environment_define(runtime->global_env, "len", hyp_value_native_function(len_fn));
-    }
+    /* Define built-in functions */
+    hyp_environment_define(runtime->global_env, "print", hyp_value_native_function("print", builtin_print));
+    hyp_environment_define(runtime->global_env, "typeof", hyp_value_native_function("typeof", builtin_typeof));
+    hyp_environment_define(runtime->global_env, "len", hyp_value_native_function("len", builtin_len));
     
     return runtime;
 }
@@ -413,32 +431,32 @@ bool hyp_value_equals(hyp_value_t a, hyp_value_t b) {
     if (a.type != b.type) return false;
     
     switch (a.type) {
-        case HYP_VALUE_NULL:
+        case HYP_VAL_NULL:
             return true;
-        case HYP_VALUE_BOOLEAN:
-            return a.as.boolean == b.as.boolean;
-        case HYP_VALUE_NUMBER:
-            return a.as.number == b.as.number;
-        case HYP_VALUE_STRING:
-            return a.as.string == b.as.string || 
-                   (a.as.string && b.as.string && 
-                    strcmp(a.as.string->chars, b.as.string->chars) == 0);
+        case HYP_VAL_BOOLEAN:
+            return a.boolean == b.boolean;
+        case HYP_VAL_NUMBER:
+            return a.number == b.number;
+        case HYP_VAL_STRING:
+            return a.string == b.string || 
+                   (a.string && b.string && 
+                    strcmp(a.string, b.string) == 0);
         default:
-            return a.as.object == b.as.object; /* Pointer comparison for objects */
+            return a.object == b.object; /* Pointer comparison for objects */
     }
 }
 
 /* Value truthiness */
 bool hyp_value_is_truthy(hyp_value_t value) {
     switch (value.type) {
-        case HYP_VALUE_NULL:
+        case HYP_VAL_NULL:
             return false;
-        case HYP_VALUE_BOOLEAN:
-            return value.as.boolean;
-        case HYP_VALUE_NUMBER:
-            return value.as.number != 0.0 && !isnan(value.as.number);
-        case HYP_VALUE_STRING:
-            return value.as.string && value.as.string->length > 0;
+        case HYP_VAL_BOOLEAN:
+            return value.boolean;
+        case HYP_VAL_NUMBER:
+            return value.number != 0.0 && !isnan(value.number);
+        case HYP_VAL_STRING:
+            return value.string && strlen(value.string) > 0;
         default:
             return true; /* Objects, arrays, functions are truthy */
     }
@@ -454,7 +472,7 @@ static hyp_value_t evaluate_literal(hyp_runtime_t* runtime, hyp_ast_node_t* node
         case HYP_LITERAL_NUMBER:
             return hyp_value_number(node->as.literal.as.number);
         case HYP_LITERAL_STRING:
-            return hyp_value_string(hyp_string_create(node->as.literal.as.string));
+            return hyp_value_string(node->as.literal.as.string);
         default:
             runtime->error = "Unknown literal type";
             return hyp_value_null();
@@ -474,33 +492,33 @@ static hyp_value_t evaluate_binary(hyp_runtime_t* runtime, hyp_ast_node_t* node)
     
     switch (node->as.binary.operator) {
         case HYP_BINARY_ADD:
-            if (left.type == HYP_VALUE_NUMBER && right.type == HYP_VALUE_NUMBER) {
-                return hyp_value_number(left.as.number + right.as.number);
+            if (left.type == HYP_VAL_NUMBER && right.type == HYP_VAL_NUMBER) {
+                return hyp_value_number(left.number + right.number);
             }
             runtime->error = "Invalid operands for addition";
             return hyp_value_null();
             
         case HYP_BINARY_SUBTRACT:
-            if (left.type == HYP_VALUE_NUMBER && right.type == HYP_VALUE_NUMBER) {
-                return hyp_value_number(left.as.number - right.as.number);
+            if (left.type == HYP_VAL_NUMBER && right.type == HYP_VAL_NUMBER) {
+                return hyp_value_number(left.number - right.number);
             }
             runtime->error = "Invalid operands for subtraction";
             return hyp_value_null();
             
         case HYP_BINARY_MULTIPLY:
-            if (left.type == HYP_VALUE_NUMBER && right.type == HYP_VALUE_NUMBER) {
-                return hyp_value_number(left.as.number * right.as.number);
+            if (left.type == HYP_VAL_NUMBER && right.type == HYP_VAL_NUMBER) {
+                return hyp_value_number(left.number * right.number);
             }
             runtime->error = "Invalid operands for multiplication";
             return hyp_value_null();
             
         case HYP_BINARY_DIVIDE:
-            if (left.type == HYP_VALUE_NUMBER && right.type == HYP_VALUE_NUMBER) {
-                if (right.as.number == 0.0) {
+            if (left.type == HYP_VAL_NUMBER && right.type == HYP_VAL_NUMBER) {
+                if (right.number == 0.0) {
                     runtime->error = "Division by zero";
                     return hyp_value_null();
                 }
-                return hyp_value_number(left.as.number / right.as.number);
+                return hyp_value_number(left.number / right.number);
             }
             runtime->error = "Invalid operands for division";
             return hyp_value_null();
@@ -512,29 +530,29 @@ static hyp_value_t evaluate_binary(hyp_runtime_t* runtime, hyp_ast_node_t* node)
             return hyp_value_boolean(!hyp_value_equals(left, right));
             
         case HYP_BINARY_LESS:
-            if (left.type == HYP_VALUE_NUMBER && right.type == HYP_VALUE_NUMBER) {
-                return hyp_value_boolean(left.as.number < right.as.number);
+            if (left.type == HYP_VAL_NUMBER && right.type == HYP_VAL_NUMBER) {
+                return hyp_value_boolean(left.number < right.number);
             }
             runtime->error = "Invalid operands for comparison";
             return hyp_value_null();
             
         case HYP_BINARY_LESS_EQUAL:
-            if (left.type == HYP_VALUE_NUMBER && right.type == HYP_VALUE_NUMBER) {
-                return hyp_value_boolean(left.as.number <= right.as.number);
+            if (left.type == HYP_VAL_NUMBER && right.type == HYP_VAL_NUMBER) {
+                return hyp_value_boolean(left.number <= right.number);
             }
             runtime->error = "Invalid operands for comparison";
             return hyp_value_null();
             
         case HYP_BINARY_GREATER:
-            if (left.type == HYP_VALUE_NUMBER && right.type == HYP_VALUE_NUMBER) {
-                return hyp_value_boolean(left.as.number > right.as.number);
+            if (left.type == HYP_VAL_NUMBER && right.type == HYP_VAL_NUMBER) {
+                return hyp_value_boolean(left.number > right.number);
             }
             runtime->error = "Invalid operands for comparison";
             return hyp_value_null();
             
         case HYP_BINARY_GREATER_EQUAL:
-            if (left.type == HYP_VALUE_NUMBER && right.type == HYP_VALUE_NUMBER) {
-                return hyp_value_boolean(left.as.number >= right.as.number);
+            if (left.type == HYP_VAL_NUMBER && right.type == HYP_VAL_NUMBER) {
+                return hyp_value_boolean(left.number >= right.number);
             }
             runtime->error = "Invalid operands for comparison";
             return hyp_value_null();

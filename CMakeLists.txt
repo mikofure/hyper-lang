@@ -6,11 +6,21 @@ set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
 # Compiler flags
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra")
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -g -DDEBUG")
+if(MSVC)
+    # MSVC compiler flags
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /W4 /Zi /DDEBUG")
+    else()
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /W4 /O2")
+    endif()
 else()
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2")
+    # GCC/Clang compiler flags
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra")
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -g -DDEBUG")
+    else()
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2")
+    endif()
 endif()
 
 # Include directories
@@ -60,6 +70,13 @@ if(WIN32)
     set_target_properties(hypc hyprun hpm hpx PROPERTIES
         OUTPUT_NAME_DEBUG "${TARGET_NAME}_d"
     )
+endif()
+
+# Install configuration
+if(WIN32)
+    set(CMAKE_INSTALL_PREFIX "$ENV{LOCALAPPDATA}/Miko/Hyper" CACHE PATH "Installation directory" FORCE)
+else()
+    set(CMAKE_INSTALL_PREFIX "/usr/local" CACHE PATH "Installation directory" FORCE)
 endif()
 
 # Install targets
