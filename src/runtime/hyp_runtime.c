@@ -359,7 +359,7 @@ hyp_value_t hyp_environment_get(hyp_environment_t* env, const char* name) {
     if (!env || !name) return hyp_value_null();
     
     hyp_value_t value = hyp_object_get(env->variables, name);
-    if (value.type != HYP_VALUE_NULL || !env->parent) {
+    if (value.type != HYP_VAL_NULL || !env->parent) {
         return value;
     }
     
@@ -371,7 +371,7 @@ hyp_error_t hyp_environment_assign(hyp_environment_t* env, const char* name, hyp
     
     /* Check if variable exists in current environment */
     hyp_value_t existing = hyp_object_get(env->variables, name);
-    if (existing.type != HYP_VALUE_NULL) {
+    if (existing.type != HYP_VAL_NULL) {
         return hyp_object_set(env->variables, name, value);
     }
     
@@ -557,13 +557,13 @@ static hyp_value_t evaluate_binary(hyp_runtime_t* runtime, hyp_ast_node_t* node)
             runtime->error = "Invalid operands for comparison";
             return hyp_value_null();
             
-        case HYP_BINARY_LOGICAL_AND:
+        case BINOP_AND:
             if (!hyp_value_is_truthy(left)) {
                 return left;
             }
             return right;
             
-        case HYP_BINARY_LOGICAL_OR:
+        case BINOP_OR:
             if (hyp_value_is_truthy(left)) {
                 return left;
             }
