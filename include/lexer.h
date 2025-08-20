@@ -27,6 +27,7 @@ typedef enum {
     TOKEN_ELSE,
     TOKEN_WHILE,
     TOKEN_FOR,
+    TOKEN_IN,
     TOKEN_RETURN,
     TOKEN_BREAK,
     TOKEN_CONTINUE,
@@ -36,6 +37,13 @@ typedef enum {
     TOKEN_STRUCT,
     TOKEN_ENUM,
     TOKEN_MATCH,
+    TOKEN_CASE,
+    TOKEN_DEFAULT,
+    TOKEN_MODULE,
+    TOKEN_TRUE,
+    TOKEN_FALSE,
+    TOKEN_NULL,
+    TOKEN_THROW,
     TOKEN_ASYNC,
     TOKEN_AWAIT,
     TOKEN_TRY,
@@ -46,11 +54,15 @@ typedef enum {
     /* Operators */
     TOKEN_PLUS,          /* + */
     TOKEN_MINUS,         /* - */
+    TOKEN_STAR,          /* * */
     TOKEN_MULTIPLY,      /* * */
+    TOKEN_SLASH,         /* / */
     TOKEN_DIVIDE,        /* / */
+    TOKEN_PERCENT,       /* % */
     TOKEN_MODULO,        /* % */
     TOKEN_POWER,         /* ** */
     TOKEN_ASSIGN,        /* = */
+    TOKEN_PERCENT_EQUAL, /* %= */
     TOKEN_PLUS_ASSIGN,   /* += */
     TOKEN_MINUS_ASSIGN,  /* -= */
     TOKEN_MUL_ASSIGN,    /* *= */
@@ -64,9 +76,15 @@ typedef enum {
     TOKEN_AND,           /* && */
     TOKEN_OR,            /* || */
     TOKEN_NOT,           /* ! */
+    TOKEN_AMPERSAND,     /* & */
     TOKEN_BITWISE_AND,   /* & */
+    TOKEN_AND_EQUAL,     /* &= */
     TOKEN_BITWISE_OR,    /* | */
+    TOKEN_OR_EQUAL,      /* |= */
+    TOKEN_CARET,         /* ^ */
     TOKEN_BITWISE_XOR,   /* ^ */
+    TOKEN_XOR_EQUAL,     /* ^= */
+    TOKEN_TILDE,         /* ~ */
     TOKEN_BITWISE_NOT,   /* ~ */
     TOKEN_LEFT_SHIFT,    /* << */
     TOKEN_RIGHT_SHIFT,   /* >> */
@@ -277,6 +295,14 @@ void hyp_token_print(const hyp_token_t* token);
  * @param token The token to free
  */
 void hyp_token_free(hyp_token_t* token);
+
+/**
+ * Create a new lexer instance
+ * @param source The source code to tokenize
+ * @param filename The filename for error reporting
+ * @return New lexer instance, or NULL on failure
+ */
+hyp_lexer_t* hyp_lexer_create(const char* source, const char* filename);
 
 /**
  * Destroy lexer and free resources

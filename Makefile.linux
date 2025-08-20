@@ -27,7 +27,7 @@ endif
 # Directories
 SRC_DIR = src
 INC_DIR = include
-BUILD_DIR = build
+BUILD_DIR = build_linux
 BIN_DIR = bin
 OBJ_DIR = $(BUILD_DIR)/obj
 

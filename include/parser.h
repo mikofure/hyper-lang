@@ -319,16 +319,22 @@ struct hyp_ast_node {
 
 /* Parser state */
 struct hyp_parser {
-    hyp_token_array_t* tokens;
-    size_t current;
+    hyp_lexer_t* lexer;
+    hyp_token_t current;
+    hyp_token_t previous;
     hyp_arena_t* arena;
-    bool has_error;
-    char error_message[256];
-    size_t error_line;
-    size_t error_column;
+    bool had_error;
+    bool panic_mode;
 };
 
 /* Function declarations */
+
+/**
+ * Create a new parser instance
+ * @param lexer The lexer instance to use
+ * @return New parser instance, or NULL on failure
+ */
+hyp_parser_t* hyp_parser_create(hyp_lexer_t* lexer);
 
 /**
  * Initialize parser with token array

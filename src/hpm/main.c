@@ -10,7 +10,47 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <getopt.h>
+#ifdef _WIN32
+    // Windows doesn't have getopt.h, we'll use a simple alternative
+    char* optarg = NULL;
+    int optind = 1;
+    
+    // Simple argument parsing for Windows
+    static int parse_args_win32(int argc, char* argv[], hpm_options_t* options, int start_idx) {
+        for (int i = start_idx; i < argc; i++) {
+            if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+                options->command = HPM_CMD_HELP;
+                return 1;
+            } else if (strcmp(argv[i], "--version") == 0) {
+                options->command = HPM_CMD_VERSION;
+                return 1;
+            } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--verbose") == 0) {
+                options->verbose = true;
+            } else if (strcmp(argv[i], "-g") == 0 || strcmp(argv[i], "--global") == 0) {
+                options->global = true;
+            } else if (strcmp(argv[i], "-D") == 0 || strcmp(argv[i], "--save-dev") == 0) {
+                options->save_dev = true;
+            } else if (strcmp(argv[i], "-f") == 0 || strcmp(argv[i], "--force") == 0) {
+                options->force = true;
+            } else if (strcmp(argv[i], "--offline") == 0) {
+                options->offline = true;
+            } else if (strcmp(argv[i], "--registry") == 0 && i + 1 < argc) {
+                options->registry_url = argv[++i];
+            } else if (argv[i][0] != '-') {
+                if (!options->package_name) {
+                    options->package_name = argv[i];
+                } else if (!options->version_spec) {
+                    options->version_spec = argv[i];
+                } else if (!options->script_name) {
+                    options->script_name = argv[i];
+                }
+            }
+        }
+        return 0;
+    }
+#else
+    #include <getopt.h>
+#endif
 
 #define HPM_VERSION "0.1.0"
 
@@ -164,6 +204,11 @@ static bool parse_arguments(int argc, char* argv[], hpm_options_t* options) {
         return true;
     }
     
+#ifdef _WIN32
+    if (parse_args_win32(argc, argv, options, 2)) {
+        return true;
+    }
+#else
     /* Reset getopt */
     optind = 2; /* Start parsing from the second argument */
     
@@ -202,6 +247,7 @@ static bool parse_arguments(int argc, char* argv[], hpm_options_t* options) {
                 return false;
         }
     }
+#endif
     
     /* Parse remaining arguments based on command */
     switch (options->command) {
@@ -252,10 +298,10 @@ static bool parse_arguments(int argc, char* argv[], hpm_options_t* options) {
 }
 
 /* Execute HPM commands */
-static int execute_init(hyp_hpm_context_t* hpm, hpm_options_t* options) {
-    hyp_error_t result = hyp_hpm_init_package(hpm, options->package_name);
+static int execute_init(hpm_context_t* hpm, hpm_options_t* options) {
+    hyp_error_t result = hpm_init_package(hpm, options->package_name, false);
     if (result != HYP_OK) {
-        fprintf(stderr, "Error: %s\n", hyp_hpm_get_error(hpm));
+        fprintf(stderr, "Error: %s\n", hpm_get_error(hpm));
         return 1;
     }
     
@@ -263,12 +309,12 @@ static int execute_init(hyp_hpm_context_t* hpm, hpm_options_t* options) {
     return 0;
 }
 
-static int execute_install(hyp_hpm_context_t* hpm, hpm_options_t* options) {
+static int execute_install(hpm_context_t* hpm, hpm_options_t* options) {
     if (!options->package_name) {
         /* Install all dependencies from manifest */
-        hyp_error_t result = hyp_hpm_load_manifest(hpm, NULL);
-        if (result != HYP_OK) {
-            fprintf(stderr, "Error: %s\n", hyp_hpm_get_error(hpm));
+        hyp_package_t* manifest = hpm_load_manifest(hpm, NULL);
+        if (!manifest) {
+            fprintf(stderr, "Error: %s\n", hpm_get_error(hpm));
             return 1;
         }
         
@@ -278,9 +324,10 @@ static int execute_install(hyp_hpm_context_t* hpm, hpm_options_t* options) {
         return 0;
     }
     
-    hyp_error_t result = hyp_hpm_install_package(hpm, options->package_name, options->version_spec);
-    if (result != HYP_OK) {
-        fprintf(stderr, "Error: %s\n", hyp_hpm_get_error(hpm));
+    hpm_install_options_t install_opts = {0};
+        hyp_error_t result = hpm_install(hpm, options->package_name, &install_opts);
+        if (result != HYP_OK) {
+            fprintf(stderr, "Error: %s\n", hpm_get_error(hpm));
         return 1;
     }
     
@@ -288,10 +335,10 @@ static int execute_install(hyp_hpm_context_t* hpm, hpm_options_t* options) {
     return 0;
 }
 
-static int execute_remove(hyp_hpm_context_t* hpm, hpm_options_t* options) {
-    hyp_error_t result = hyp_hpm_remove_package(hpm, options->package_name);
+static int execute_remove(hpm_context_t* hpm, hpm_options_t* options) {
+    hyp_error_t result = hpm_remove(hpm, options->package_name, true);
     if (result != HYP_OK) {
-        fprintf(stderr, "Error: %s\n", hyp_hpm_get_error(hpm));
+        fprintf(stderr, "Error: %s\n", hpm_get_error(hpm));
         return 1;
     }
     
@@ -299,10 +346,10 @@ static int execute_remove(hyp_hpm_context_t* hpm, hpm_options_t* options) {
     return 0;
 }
 
-static int execute_update(hyp_hpm_context_t* hpm, hpm_options_t* options) {
-    hyp_error_t result = hyp_hpm_update_package(hpm, options->package_name);
+static int execute_update(hpm_context_t* hpm, hpm_options_t* options) {
+    hyp_error_t result = hpm_update(hpm, options->package_name);
     if (result != HYP_OK) {
-        fprintf(stderr, "Error: %s\n", hyp_hpm_get_error(hpm));
+        fprintf(stderr, "Error: %s\n", hpm_get_error(hpm));
         return 1;
     }
     
@@ -314,13 +361,10 @@ static int execute_update(hyp_hpm_context_t* hpm, hpm_options_t* options) {
     return 0;
 }
 
-static int execute_list(hyp_hpm_context_t* hpm, hpm_options_t* options) {
-    hyp_package_info_t* packages = NULL;
-    size_t package_count = 0;
-    
-    hyp_error_t result = hyp_hpm_list_packages(hpm, &packages, &package_count);
+static int execute_list(hpm_context_t* hpm, hpm_options_t* options) {
+    hyp_error_t result = hpm_list(hpm, false);
     if (result != HYP_OK) {
-        fprintf(stderr, "Error: %s\n", hyp_hpm_get_error(hpm));
+        fprintf(stderr, "Error: %s\n", hpm_get_error(hpm));
         return 1;
     }
     
@@ -334,13 +378,12 @@ static int execute_list(hyp_hpm_context_t* hpm, hpm_options_t* options) {
     return 0;
 }
 
-static int execute_search(hyp_hpm_context_t* hpm, hpm_options_t* options) {
-    hyp_package_info_t* results = NULL;
-    size_t result_count = 0;
+static int execute_search(hpm_context_t* hpm, hpm_options_t* options) {
+    hyp_registry_entry_t results[10];
     
-    hyp_error_t result = hyp_hpm_search_packages(hpm, options->package_name, &results, &result_count);
-    if (result != HYP_OK) {
-        fprintf(stderr, "Error: %s\n", hyp_hpm_get_error(hpm));
+    int result_count = hpm_search(hpm, options->package_name, results, 10);
+    if (result_count < 0) {
+        fprintf(stderr, "Error: %s\n", hpm_get_error(hpm));
         return 1;
     }
     
@@ -354,12 +397,10 @@ static int execute_search(hyp_hpm_context_t* hpm, hpm_options_t* options) {
     return 0;
 }
 
-static int execute_info(hyp_hpm_context_t* hpm, hpm_options_t* options) {
-    hyp_package_info_t info;
-    
-    hyp_error_t result = hyp_hpm_show_package_info(hpm, options->package_name, &info);
+static int execute_info(hpm_context_t* hpm, hpm_options_t* options) {
+    hyp_error_t result = hpm_info(hpm, options->package_name);
     if (result != HYP_OK) {
-        fprintf(stderr, "Error: %s\n", hyp_hpm_get_error(hpm));
+        fprintf(stderr, "Error: %s\n", hpm_get_error(hpm));
         return 1;
     }
     
@@ -369,12 +410,12 @@ static int execute_info(hyp_hpm_context_t* hpm, hpm_options_t* options) {
     return 0;
 }
 
-static int execute_publish(hyp_hpm_context_t* hpm, hpm_options_t* options) {
+static int execute_publish(hpm_context_t* hpm, hpm_options_t* options) {
     const char* package_path = options->package_name ? options->package_name : ".";
     
-    hyp_error_t result = hyp_hpm_publish_package(hpm, package_path);
+    hyp_error_t result = hpm_publish(hpm, package_path);
     if (result != HYP_OK) {
-        fprintf(stderr, "Error: %s\n", hyp_hpm_get_error(hpm));
+        fprintf(stderr, "Error: %s\n", hpm_get_error(hpm));
         return 1;
     }
     
@@ -382,10 +423,10 @@ static int execute_publish(hyp_hpm_context_t* hpm, hpm_options_t* options) {
     return 0;
 }
 
-static int execute_run(hyp_hpm_context_t* hpm, hpm_options_t* options) {
-    hyp_error_t result = hyp_hpm_run_script(hpm, options->script_name);
+static int execute_run(hpm_context_t* hpm, hpm_options_t* options) {
+    hyp_error_t result = hpm_run_script(hpm, options->script_name, NULL, 0);
     if (result != HYP_OK) {
-        fprintf(stderr, "Error: %s\n", hyp_hpm_get_error(hpm));
+        fprintf(stderr, "Error: %s\n", hpm_get_error(hpm));
         return 1;
     }
     
@@ -414,14 +455,14 @@ int main(int argc, char* argv[]) {
     }
     
     /* Create HPM context */
-    hyp_hpm_context_t* hpm = hyp_hpm_create();
+    hpm_context_t* hpm = hpm_create();
     if (!hpm) {
         fprintf(stderr, "Error: Could not initialize package manager\n");
         return 1;
     }
     
     /* Configure HPM */
-    hpm->config.verbose = options.verbose;
+    /* Config set */
     hpm->config.offline_mode = options.offline;
     
     if (options.registry_url) {
@@ -474,6 +515,6 @@ int main(int argc, char* argv[]) {
         HYP_FREE(options.version_spec);
     }
     
-    hyp_hpm_destroy(hpm);
+    hpm_destroy(hpm);
     return result;
 }

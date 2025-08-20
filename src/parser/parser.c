@@ -10,15 +10,7 @@
 #include "../../include/hyp_common.h"
 #include <string.h>
 
-/* Parser state */
-struct hyp_parser {
-    hyp_lexer_t* lexer;
-    hyp_token_t current;
-    hyp_token_t previous;
-    hyp_arena_t* arena;
-    bool had_error;
-    bool panic_mode;
-};
+/* Parser implementation */
 
 /* Forward declarations */
 static hyp_ast_node_t* parse_expression(hyp_parser_t* parser);
@@ -30,14 +22,14 @@ static void error_at(hyp_parser_t* parser, hyp_token_t* token, const char* messa
     if (parser->panic_mode) return;
     parser->panic_mode = true;
     
-    fprintf(stderr, "[%s:%zu:%zu] Error", token->filename, token->line, token->column);
+    fprintf(stderr, "[line %zu:%zu] Error", token->line, token->column);
     
-    if (token->type == HYP_TOKEN_EOF) {
+    if (token->type == TOKEN_EOF) {
         fprintf(stderr, " at end");
-    } else if (token->type == HYP_TOKEN_ERROR) {
+    } else if (token->type == TOKEN_ERROR) {
         /* Nothing */
     } else {
-        fprintf(stderr, " at '%.*s'", (int)token->length, token->start);
+        fprintf(stderr, " at '%.*s'", (int)token->lexeme.length, token->lexeme.data);
     }
     
     fprintf(stderr, ": %s\n", message);
@@ -57,10 +49,10 @@ static void advance(hyp_parser_t* parser) {
     parser->previous = parser->current;
     
     for (;;) {
-        parser->current = hyp_lexer_scan_token(parser->lexer);
-        if (parser->current.type != HYP_TOKEN_ERROR) break;
+        parser->current = hyp_lexer_next_token(parser->lexer);
+        if (parser->current.type != TOKEN_ERROR) break;
         
-        error_at_current(parser, parser->current.start);
+        error_at_current(parser, parser->current.lexeme.data);
     }
 }
 
@@ -109,17 +101,17 @@ static char* copy_string(hyp_parser_t* parser, const char* start, size_t length)
 static void synchronize(hyp_parser_t* parser) {
     parser->panic_mode = false;
     
-    while (parser->current.type != HYP_TOKEN_EOF) {
-        if (parser->previous.type == HYP_TOKEN_SEMICOLON) return;
+    while (parser->current.type != TOKEN_EOF) {
+        if (parser->previous.type == TOKEN_SEMICOLON) return;
         
         switch (parser->current.type) {
-            case HYP_TOKEN_FN:
-            case HYP_TOKEN_LET:
-            case HYP_TOKEN_CONST:
-            case HYP_TOKEN_IF:
-            case HYP_TOKEN_WHILE:
-            case HYP_TOKEN_FOR:
-            case HYP_TOKEN_RETURN:
+            case TOKEN_FUNC:
+            case TOKEN_LET:
+            case TOKEN_CONST:
+            case TOKEN_IF:
+            case TOKEN_WHILE:
+            case TOKEN_FOR:
+            case TOKEN_RETURN:
                 return;
             default:
                 break;
@@ -131,117 +123,91 @@ static void synchronize(hyp_parser_t* parser) {
 
 /* Expression parsing */
 static hyp_ast_node_t* parse_primary(hyp_parser_t* parser) {
-    if (match(parser, HYP_TOKEN_TRUE)) {
-        hyp_ast_node_t* node = create_node(parser, HYP_AST_LITERAL);
+    if (match(parser, TOKEN_BOOLEAN)) {
+        hyp_ast_node_t* node = create_node(parser, AST_BOOLEAN);
         if (node) {
-            node->as.literal.type = HYP_LITERAL_BOOLEAN;
-            node->as.literal.as.boolean = true;
+            node->boolean.value = parser->previous.value.boolean;
         }
         return node;
     }
     
-    if (match(parser, HYP_TOKEN_FALSE)) {
-        hyp_ast_node_t* node = create_node(parser, HYP_AST_LITERAL);
+    if (match(parser, TOKEN_NUMBER)) {
+        hyp_ast_node_t* node = create_node(parser, AST_NUMBER);
         if (node) {
-            node->as.literal.type = HYP_LITERAL_BOOLEAN;
-            node->as.literal.as.boolean = false;
+            node->number.value = parser->previous.value.number;
         }
         return node;
     }
     
-    if (match(parser, HYP_TOKEN_NULL)) {
-        hyp_ast_node_t* node = create_node(parser, HYP_AST_LITERAL);
+    if (match(parser, TOKEN_STRING)) {
+        hyp_ast_node_t* node = create_node(parser, AST_STRING);
         if (node) {
-            node->as.literal.type = HYP_LITERAL_NULL;
+            node->string.value = copy_string(parser, parser->previous.lexeme.data, parser->previous.lexeme.length);
         }
         return node;
     }
     
-    if (match(parser, HYP_TOKEN_NUMBER)) {
-        hyp_ast_node_t* node = create_node(parser, HYP_AST_LITERAL);
+    if (match(parser, TOKEN_IDENTIFIER)) {
+        hyp_ast_node_t* node = create_node(parser, AST_IDENTIFIER);
         if (node) {
-            node->as.literal.type = HYP_LITERAL_NUMBER;
-            char* str = copy_string(parser, parser->previous.start, parser->previous.length);
-            if (str) {
-                node->as.literal.as.number = strtod(str, NULL);
-            }
+            node->identifier.name = copy_string(parser, 
+                parser->previous.lexeme.data, parser->previous.lexeme.length);
         }
         return node;
     }
     
-    if (match(parser, HYP_TOKEN_STRING)) {
-        hyp_ast_node_t* node = create_node(parser, HYP_AST_LITERAL);
-        if (node) {
-            node->as.literal.type = HYP_LITERAL_STRING;
-            /* Skip quotes */
-            node->as.literal.as.string = copy_string(parser, 
-                parser->previous.start + 1, parser->previous.length - 2);
-        }
-        return node;
-    }
-    
-    if (match(parser, HYP_TOKEN_IDENTIFIER)) {
-        hyp_ast_node_t* node = create_node(parser, HYP_AST_IDENTIFIER);
-        if (node) {
-            node->as.identifier.name = copy_string(parser, 
-                parser->previous.start, parser->previous.length);
-        }
-        return node;
-    }
-    
-    if (match(parser, HYP_TOKEN_LEFT_PAREN)) {
+    if (match(parser, TOKEN_LEFT_PAREN)) {
         hyp_ast_node_t* expr = parse_expression(parser);
-        consume(parser, HYP_TOKEN_RIGHT_PAREN, "Expected ')' after expression");
+        consume(parser, TOKEN_RIGHT_PAREN, "Expected ')' after expression");
         return expr;
     }
     
-    if (match(parser, HYP_TOKEN_LEFT_BRACKET)) {
-        hyp_ast_node_t* node = create_node(parser, HYP_AST_ARRAY_LITERAL);
+    if (match(parser, TOKEN_LEFT_BRACKET)) {
+        hyp_ast_node_t* node = create_node(parser, AST_ARRAY_LITERAL);
         if (!node) return NULL;
         
-        HYP_ARRAY_INIT(node->as.array_literal.elements);
+        HYP_ARRAY_INIT(&node->array_literal.elements);
         
-        if (!check(parser, HYP_TOKEN_RIGHT_BRACKET)) {
+        if (!check(parser, TOKEN_RIGHT_BRACKET)) {
             do {
                 hyp_ast_node_t* element = parse_expression(parser);
                 if (element) {
-                    HYP_ARRAY_PUSH(node->as.array_literal.elements, element);
+                    HYP_ARRAY_PUSH(&node->array_literal.elements, element);
                 }
-            } while (match(parser, HYP_TOKEN_COMMA));
+            } while (match(parser, TOKEN_COMMA));
         }
         
-        consume(parser, HYP_TOKEN_RIGHT_BRACKET, "Expected ']' after array elements");
+        consume(parser, TOKEN_RIGHT_BRACKET, "Expected ']' after array elements");
         return node;
     }
     
-    if (match(parser, HYP_TOKEN_LEFT_BRACE)) {
-        hyp_ast_node_t* node = create_node(parser, HYP_AST_OBJECT_LITERAL);
+    if (match(parser, TOKEN_LEFT_BRACE)) {
+        hyp_ast_node_t* node = create_node(parser, AST_OBJECT_LITERAL);
         if (!node) return NULL;
         
-        HYP_ARRAY_INIT(node->as.object_literal.properties);
+        HYP_ARRAY_INIT(&node->object_literal.properties);
         
-        if (!check(parser, HYP_TOKEN_RIGHT_BRACE)) {
+        if (!check(parser, TOKEN_RIGHT_BRACE)) {
             do {
-                hyp_object_property_t* prop = hyp_arena_alloc(parser->arena, sizeof(hyp_object_property_t));
-                if (!prop) break;
+                hyp_object_property_t prop = {0};
                 
-                if (match(parser, HYP_TOKEN_IDENTIFIER)) {
-                    prop->key = copy_string(parser, parser->previous.start, parser->previous.length);
-                } else if (match(parser, HYP_TOKEN_STRING)) {
-                    prop->key = copy_string(parser, parser->previous.start + 1, parser->previous.length - 2);
+                if (match(parser, TOKEN_IDENTIFIER)) {
+                    prop.key = copy_string(parser, parser->previous.lexeme.data, parser->previous.lexeme.length);
+                } else if (match(parser, TOKEN_STRING)) {
+                    prop.key = copy_string(parser, parser->previous.lexeme.data + 1, parser->previous.lexeme.length - 2);
                 } else {
                     error(parser, "Expected property name");
                     break;
                 }
                 
-                consume(parser, HYP_TOKEN_COLON, "Expected ':' after property name");
-                prop->value = parse_expression(parser);
+                consume(parser, TOKEN_COLON, "Expected ':' after property name");
+                prop.value = parse_expression(parser);
                 
-                HYP_ARRAY_PUSH(node->as.object_literal.properties, prop);
-            } while (match(parser, HYP_TOKEN_COMMA));
+                HYP_ARRAY_PUSH(&node->object_literal.properties, prop);
+            } while (match(parser, TOKEN_COMMA));
         }
         
-        consume(parser, HYP_TOKEN_RIGHT_BRACE, "Expected '}' after object properties");
+        consume(parser, TOKEN_RIGHT_BRACE, "Expected '}' after object properties");
         return node;
     }
     
@@ -253,41 +219,41 @@ static hyp_ast_node_t* parse_call(hyp_parser_t* parser) {
     hyp_ast_node_t* expr = parse_primary(parser);
     
     while (true) {
-        if (match(parser, HYP_TOKEN_LEFT_PAREN)) {
-            hyp_ast_node_t* call = create_node(parser, HYP_AST_CALL);
+        if (match(parser, TOKEN_LEFT_PAREN)) {
+            hyp_ast_node_t* call = create_node(parser, AST_CALL);
             if (!call) break;
             
-            call->as.call.callee = expr;
-            HYP_ARRAY_INIT(call->as.call.arguments);
+            call->call.callee = expr;
+            HYP_ARRAY_INIT(&call->call.arguments);
             
-            if (!check(parser, HYP_TOKEN_RIGHT_PAREN)) {
+            if (!check(parser, TOKEN_RIGHT_PAREN)) {
                 do {
                     hyp_ast_node_t* arg = parse_expression(parser);
                     if (arg) {
-                        HYP_ARRAY_PUSH(call->as.call.arguments, arg);
+                        HYP_ARRAY_PUSH(&call->call.arguments, arg);
                     }
-                } while (match(parser, HYP_TOKEN_COMMA));
+                } while (match(parser, TOKEN_COMMA));
             }
             
-            consume(parser, HYP_TOKEN_RIGHT_PAREN, "Expected ')' after arguments");
+            consume(parser, TOKEN_RIGHT_PAREN, "Expected ')' after arguments");
             expr = call;
-        } else if (match(parser, HYP_TOKEN_DOT)) {
-            hyp_ast_node_t* member = create_node(parser, HYP_AST_MEMBER_ACCESS);
+        } else if (match(parser, TOKEN_DOT)) {
+            hyp_ast_node_t* member = create_node(parser, AST_MEMBER_ACCESS);
             if (!member) break;
             
-            member->as.member_access.object = expr;
-            consume(parser, HYP_TOKEN_IDENTIFIER, "Expected property name after '.'");
-            member->as.member_access.property = copy_string(parser, 
-                parser->previous.start, parser->previous.length);
+            member->member_access.object = expr;
+            consume(parser, TOKEN_IDENTIFIER, "Expected property name after '.'");
+            member->member_access.member = copy_string(parser, 
+                parser->previous.lexeme.data, parser->previous.lexeme.length);
             
             expr = member;
-        } else if (match(parser, HYP_TOKEN_LEFT_BRACKET)) {
-            hyp_ast_node_t* index = create_node(parser, HYP_AST_INDEX_ACCESS);
+        } else if (match(parser, TOKEN_LEFT_BRACKET)) {
+            hyp_ast_node_t* index = create_node(parser, AST_INDEX_ACCESS);
             if (!index) break;
             
-            index->as.index_access.object = expr;
-            index->as.index_access.index = parse_expression(parser);
-            consume(parser, HYP_TOKEN_RIGHT_BRACKET, "Expected ']' after index");
+            index->index_access.object = expr;
+            index->index_access.index = parse_expression(parser);
+            consume(parser, TOKEN_RIGHT_BRACKET, "Expected ']' after index");
             
             expr = index;
         } else {
@@ -299,19 +265,18 @@ static hyp_ast_node_t* parse_call(hyp_parser_t* parser) {
 }
 
 static hyp_ast_node_t* parse_unary(hyp_parser_t* parser) {
-    if (match(parser, HYP_TOKEN_BANG) || match(parser, HYP_TOKEN_MINUS) || match(parser, HYP_TOKEN_NOT)) {
-        hyp_ast_node_t* node = create_node(parser, HYP_AST_UNARY);
+    if (match(parser, TOKEN_NOT) || match(parser, TOKEN_MINUS)) {
+        hyp_ast_node_t* node = create_node(parser, AST_UNARY_OP);
         if (!node) return NULL;
         
         hyp_token_type_t op_type = parser->previous.type;
-        switch (op_type) {
-            case HYP_TOKEN_BANG: node->as.unary.operator = HYP_UNARY_NOT; break;
-            case HYP_TOKEN_MINUS: node->as.unary.operator = HYP_UNARY_NEGATE; break;
-            case HYP_TOKEN_NOT: node->as.unary.operator = HYP_UNARY_NOT; break;
-            default: break;
-        }
-        
-        node->as.unary.operand = parse_unary(parser);
+         switch (op_type) {
+              case TOKEN_NOT: node->unary_op.op = UNOP_NOT; break;
+              case TOKEN_MINUS: node->unary_op.op = UNOP_MINUS; break;
+             default: break;
+         }
+         
+         node->unary_op.operand = parse_unary(parser);
         return node;
     }
     
@@ -321,20 +286,20 @@ static hyp_ast_node_t* parse_unary(hyp_parser_t* parser) {
 static hyp_ast_node_t* parse_factor(hyp_parser_t* parser) {
     hyp_ast_node_t* expr = parse_unary(parser);
     
-    while (match(parser, HYP_TOKEN_SLASH) || match(parser, HYP_TOKEN_STAR) || match(parser, HYP_TOKEN_PERCENT)) {
-        hyp_ast_node_t* binary = create_node(parser, HYP_AST_BINARY);
+    while (match(parser, TOKEN_DIVIDE) || match(parser, TOKEN_MULTIPLY) || match(parser, TOKEN_MODULO)) {
+        hyp_ast_node_t* binary = create_node(parser, AST_BINARY_OP);
         if (!binary) break;
         
         hyp_token_type_t op_type = parser->previous.type;
         switch (op_type) {
-            case HYP_TOKEN_SLASH: binary->as.binary.operator = HYP_BINARY_DIVIDE; break;
-            case HYP_TOKEN_STAR: binary->as.binary.operator = HYP_BINARY_MULTIPLY; break;
-            case HYP_TOKEN_PERCENT: binary->as.binary.operator = HYP_BINARY_MODULO; break;
+            case TOKEN_DIVIDE: binary->binary_op.op = BINOP_DIV; break;
+            case TOKEN_MULTIPLY: binary->binary_op.op = BINOP_MUL; break;
+            case TOKEN_MODULO: binary->binary_op.op = BINOP_MOD; break;
             default: break;
         }
-        
-        binary->as.binary.left = expr;
-        binary->as.binary.right = parse_unary(parser);
+         
+        binary->binary_op.left = expr;
+        binary->binary_op.right = parse_unary(parser);
         expr = binary;
     }
     
@@ -344,19 +309,19 @@ static hyp_ast_node_t* parse_factor(hyp_parser_t* parser) {
 static hyp_ast_node_t* parse_term(hyp_parser_t* parser) {
     hyp_ast_node_t* expr = parse_factor(parser);
     
-    while (match(parser, HYP_TOKEN_MINUS) || match(parser, HYP_TOKEN_PLUS)) {
-        hyp_ast_node_t* binary = create_node(parser, HYP_AST_BINARY);
+    while (match(parser, TOKEN_MINUS) || match(parser, TOKEN_PLUS)) {
+        hyp_ast_node_t* binary = create_node(parser, AST_BINARY_OP);
         if (!binary) break;
         
         hyp_token_type_t op_type = parser->previous.type;
         switch (op_type) {
-            case HYP_TOKEN_MINUS: binary->as.binary.operator = HYP_BINARY_SUBTRACT; break;
-            case HYP_TOKEN_PLUS: binary->as.binary.operator = HYP_BINARY_ADD; break;
+            case TOKEN_MINUS: binary->binary_op.op = BINOP_SUB; break;
+            case TOKEN_PLUS: binary->binary_op.op = BINOP_ADD; break;
             default: break;
         }
-        
-        binary->as.binary.left = expr;
-        binary->as.binary.right = parse_factor(parser);
+         
+        binary->binary_op.left = expr;
+        binary->binary_op.right = parse_factor(parser);
         expr = binary;
     }
     
@@ -366,22 +331,22 @@ static hyp_ast_node_t* parse_term(hyp_parser_t* parser) {
 static hyp_ast_node_t* parse_comparison(hyp_parser_t* parser) {
     hyp_ast_node_t* expr = parse_term(parser);
     
-    while (match(parser, HYP_TOKEN_GREATER) || match(parser, HYP_TOKEN_GREATER_EQUAL) ||
-           match(parser, HYP_TOKEN_LESS) || match(parser, HYP_TOKEN_LESS_EQUAL)) {
-        hyp_ast_node_t* binary = create_node(parser, HYP_AST_BINARY);
+    while (match(parser, TOKEN_GREATER) || match(parser, TOKEN_GREATER_EQUAL) ||
+           match(parser, TOKEN_LESS) || match(parser, TOKEN_LESS_EQUAL)) {
+        hyp_ast_node_t* binary = create_node(parser, AST_BINARY_OP);
         if (!binary) break;
         
         hyp_token_type_t op_type = parser->previous.type;
         switch (op_type) {
-            case HYP_TOKEN_GREATER: binary->as.binary.operator = HYP_BINARY_GREATER; break;
-            case HYP_TOKEN_GREATER_EQUAL: binary->as.binary.operator = HYP_BINARY_GREATER_EQUAL; break;
-            case HYP_TOKEN_LESS: binary->as.binary.operator = HYP_BINARY_LESS; break;
-            case HYP_TOKEN_LESS_EQUAL: binary->as.binary.operator = HYP_BINARY_LESS_EQUAL; break;
+            case TOKEN_GREATER: binary->binary_op.op = BINOP_GT; break;
+            case TOKEN_GREATER_EQUAL: binary->binary_op.op = BINOP_GE; break;
+            case TOKEN_LESS: binary->binary_op.op = BINOP_LT; break;
+            case TOKEN_LESS_EQUAL: binary->binary_op.op = BINOP_LE; break;
             default: break;
         }
-        
-        binary->as.binary.left = expr;
-        binary->as.binary.right = parse_term(parser);
+         
+        binary->binary_op.left = expr;
+        binary->binary_op.right = parse_term(parser);
         expr = binary;
     }
     
@@ -391,19 +356,19 @@ static hyp_ast_node_t* parse_comparison(hyp_parser_t* parser) {
 static hyp_ast_node_t* parse_equality(hyp_parser_t* parser) {
     hyp_ast_node_t* expr = parse_comparison(parser);
     
-    while (match(parser, HYP_TOKEN_BANG_EQUAL) || match(parser, HYP_TOKEN_EQUAL_EQUAL)) {
-        hyp_ast_node_t* binary = create_node(parser, HYP_AST_BINARY);
+    while (match(parser, TOKEN_NOT_EQUAL) || match(parser, TOKEN_EQUAL)) {
+        hyp_ast_node_t* binary = create_node(parser, AST_BINARY_OP);
         if (!binary) break;
         
         hyp_token_type_t op_type = parser->previous.type;
         switch (op_type) {
-            case HYP_TOKEN_BANG_EQUAL: binary->as.binary.operator = HYP_BINARY_NOT_EQUAL; break;
-            case HYP_TOKEN_EQUAL_EQUAL: binary->as.binary.operator = HYP_BINARY_EQUAL; break;
+            case TOKEN_NOT_EQUAL: binary->binary_op.op = BINOP_NE; break;
+            case TOKEN_EQUAL: binary->binary_op.op = BINOP_EQ; break;
             default: break;
         }
-        
-        binary->as.binary.left = expr;
-        binary->as.binary.right = parse_comparison(parser);
+         
+        binary->binary_op.left = expr;
+        binary->binary_op.right = parse_comparison(parser);
         expr = binary;
     }
     
@@ -413,13 +378,13 @@ static hyp_ast_node_t* parse_equality(hyp_parser_t* parser) {
 static hyp_ast_node_t* parse_logical_and(hyp_parser_t* parser) {
     hyp_ast_node_t* expr = parse_equality(parser);
     
-    while (match(parser, HYP_TOKEN_AND) || match(parser, HYP_TOKEN_AND_AND)) {
-        hyp_ast_node_t* binary = create_node(parser, HYP_AST_BINARY);
+    while (match(parser, TOKEN_AND)) {
+         hyp_ast_node_t* binary = create_node(parser, AST_BINARY_OP);
         if (!binary) break;
         
-        binary->as.binary.operator = HYP_BINARY_AND;
-        binary->as.binary.left = expr;
-        binary->as.binary.right = parse_equality(parser);
+        binary->binary_op.op = BINOP_AND;
+        binary->binary_op.left = expr;
+        binary->binary_op.right = parse_equality(parser);
         expr = binary;
     }
     
@@ -429,13 +394,13 @@ static hyp_ast_node_t* parse_logical_and(hyp_parser_t* parser) {
 static hyp_ast_node_t* parse_logical_or(hyp_parser_t* parser) {
     hyp_ast_node_t* expr = parse_logical_and(parser);
     
-    while (match(parser, HYP_TOKEN_OR) || match(parser, HYP_TOKEN_OR_OR)) {
-        hyp_ast_node_t* binary = create_node(parser, HYP_AST_BINARY);
+    while (match(parser, TOKEN_OR)) {
+         hyp_ast_node_t* binary = create_node(parser, AST_BINARY_OP);
         if (!binary) break;
         
-        binary->as.binary.operator = HYP_BINARY_OR;
-        binary->as.binary.left = expr;
-        binary->as.binary.right = parse_logical_and(parser);
+        binary->binary_op.op = BINOP_OR;
+        binary->binary_op.left = expr;
+        binary->binary_op.right = parse_logical_and(parser);
         expr = binary;
     }
     
@@ -445,13 +410,13 @@ static hyp_ast_node_t* parse_logical_or(hyp_parser_t* parser) {
 static hyp_ast_node_t* parse_assignment(hyp_parser_t* parser) {
     hyp_ast_node_t* expr = parse_logical_or(parser);
     
-    if (match(parser, HYP_TOKEN_EQUAL)) {
-        hyp_ast_node_t* assignment = create_node(parser, HYP_AST_ASSIGNMENT);
+    if (match(parser, TOKEN_EQUAL)) {
+        hyp_ast_node_t* assignment = create_node(parser, AST_ASSIGNMENT);
         if (!assignment) return expr;
         
-        assignment->as.assignment.operator = HYP_ASSIGN_SIMPLE;
-        assignment->as.assignment.target = expr;
-        assignment->as.assignment.value = parse_assignment(parser);
+        assignment->assignment.op = ASSIGN_SIMPLE;
+        assignment->assignment.target = expr;
+        assignment->assignment.value = parse_assignment(parser);
         return assignment;
     }
     
@@ -464,88 +429,88 @@ static hyp_ast_node_t* parse_expression(hyp_parser_t* parser) {
 
 /* Statement parsing */
 static hyp_ast_node_t* parse_expression_statement(hyp_parser_t* parser) {
-    hyp_ast_node_t* node = create_node(parser, HYP_AST_EXPRESSION_STMT);
+    hyp_ast_node_t* node = create_node(parser, AST_EXPRESSION_STMT);
     if (!node) return NULL;
     
-    node->as.expression_stmt.expression = parse_expression(parser);
-    consume(parser, HYP_TOKEN_SEMICOLON, "Expected ';' after expression");
+    node->expression_stmt.expression = parse_expression(parser);
+    consume(parser, TOKEN_SEMICOLON, "Expected ';' after expression");
     
     return node;
 }
 
 static hyp_ast_node_t* parse_block_statement(hyp_parser_t* parser) {
-    hyp_ast_node_t* node = create_node(parser, HYP_AST_BLOCK);
+    hyp_ast_node_t* node = create_node(parser, AST_BLOCK_STMT);
     if (!node) return NULL;
     
-    HYP_ARRAY_INIT(node->as.block.statements);
+    HYP_ARRAY_INIT(&node->block_stmt.statements);
     
-    while (!check(parser, HYP_TOKEN_RIGHT_BRACE) && !check(parser, HYP_TOKEN_EOF)) {
+    while (!check(parser, TOKEN_RIGHT_BRACE) && !check(parser, TOKEN_EOF)) {
         hyp_ast_node_t* stmt = parse_declaration(parser);
         if (stmt) {
-            HYP_ARRAY_PUSH(node->as.block.statements, stmt);
+            HYP_ARRAY_PUSH(&node->block_stmt.statements, stmt);
         }
     }
     
-    consume(parser, HYP_TOKEN_RIGHT_BRACE, "Expected '}' after block");
+    consume(parser, TOKEN_RIGHT_BRACE, "Expected '}' after block");
     return node;
 }
 
 static hyp_ast_node_t* parse_if_statement(hyp_parser_t* parser) {
-    hyp_ast_node_t* node = create_node(parser, HYP_AST_IF);
+    hyp_ast_node_t* node = create_node(parser, AST_IF_STMT);
     if (!node) return NULL;
     
-    consume(parser, HYP_TOKEN_LEFT_PAREN, "Expected '(' after 'if'");
-    node->as.if_stmt.condition = parse_expression(parser);
-    consume(parser, HYP_TOKEN_RIGHT_PAREN, "Expected ')' after if condition");
+    consume(parser, TOKEN_LEFT_PAREN, "Expected '(' after 'if'");
+    node->if_stmt.condition = parse_expression(parser);
+    consume(parser, TOKEN_RIGHT_PAREN, "Expected ')' after if condition");
     
-    node->as.if_stmt.then_branch = parse_statement(parser);
+    node->if_stmt.then_stmt = parse_statement(parser);
     
-    if (match(parser, HYP_TOKEN_ELSE)) {
-        node->as.if_stmt.else_branch = parse_statement(parser);
+    if (match(parser, TOKEN_ELSE)) {
+        node->if_stmt.else_stmt = parse_statement(parser);
     }
     
     return node;
 }
 
 static hyp_ast_node_t* parse_while_statement(hyp_parser_t* parser) {
-    hyp_ast_node_t* node = create_node(parser, HYP_AST_WHILE);
+    hyp_ast_node_t* node = create_node(parser, AST_WHILE_STMT);
     if (!node) return NULL;
     
-    consume(parser, HYP_TOKEN_LEFT_PAREN, "Expected '(' after 'while'");
-    node->as.while_stmt.condition = parse_expression(parser);
-    consume(parser, HYP_TOKEN_RIGHT_PAREN, "Expected ')' after while condition");
+    consume(parser, TOKEN_LEFT_PAREN, "Expected '(' after 'while'");
+    node->while_stmt.condition = parse_expression(parser);
+    consume(parser, TOKEN_RIGHT_PAREN, "Expected ')' after while condition");
     
-    node->as.while_stmt.body = parse_statement(parser);
+    node->while_stmt.body = parse_statement(parser);
     
     return node;
 }
 
 static hyp_ast_node_t* parse_return_statement(hyp_parser_t* parser) {
-    hyp_ast_node_t* node = create_node(parser, HYP_AST_RETURN);
+    hyp_ast_node_t* node = create_node(parser, AST_RETURN_STMT);
     if (!node) return NULL;
     
-    if (!check(parser, HYP_TOKEN_SEMICOLON)) {
-        node->as.return_stmt.value = parse_expression(parser);
+    if (!check(parser, TOKEN_SEMICOLON)) {
+        node->return_stmt.value = parse_expression(parser);
     }
     
-    consume(parser, HYP_TOKEN_SEMICOLON, "Expected ';' after return value");
+    consume(parser, TOKEN_SEMICOLON, "Expected ';' after return value");
     return node;
 }
 
 static hyp_ast_node_t* parse_statement(hyp_parser_t* parser) {
-    if (match(parser, HYP_TOKEN_IF)) {
+    if (match(parser, TOKEN_IF)) {
         return parse_if_statement(parser);
     }
     
-    if (match(parser, HYP_TOKEN_WHILE)) {
+    if (match(parser, TOKEN_WHILE)) {
         return parse_while_statement(parser);
     }
     
-    if (match(parser, HYP_TOKEN_RETURN)) {
+    if (match(parser, TOKEN_RETURN)) {
         return parse_return_statement(parser);
     }
     
-    if (match(parser, HYP_TOKEN_LEFT_BRACE)) {
+    if (match(parser, TOKEN_LEFT_BRACE)) {
         return parse_block_statement(parser);
     }
     
@@ -554,64 +519,63 @@ static hyp_ast_node_t* parse_statement(hyp_parser_t* parser) {
 
 /* Declaration parsing */
 static hyp_ast_node_t* parse_variable_declaration(hyp_parser_t* parser, bool is_const) {
-    hyp_ast_node_t* node = create_node(parser, HYP_AST_VAR_DECL);
+    hyp_ast_node_t* node = create_node(parser, AST_VARIABLE_DECL);
     if (!node) return NULL;
     
-    node->as.var_decl.is_const = is_const;
+    node->variable_decl.is_const = is_const;
     
-    consume(parser, HYP_TOKEN_IDENTIFIER, "Expected variable name");
-    node->as.var_decl.name = copy_string(parser, parser->previous.start, parser->previous.length);
+    consume(parser, TOKEN_IDENTIFIER, "Expected variable name");
+    node->variable_decl.name = copy_string(parser, parser->previous.lexeme.data, parser->previous.lexeme.length);
     
-    if (match(parser, HYP_TOKEN_EQUAL)) {
-        node->as.var_decl.initializer = parse_expression(parser);
+    if (match(parser, TOKEN_EQUAL)) {
+        node->variable_decl.initializer = parse_expression(parser);
     }
     
-    consume(parser, HYP_TOKEN_SEMICOLON, "Expected ';' after variable declaration");
+    consume(parser, TOKEN_SEMICOLON, "Expected ';' after variable declaration");
     return node;
 }
 
 static hyp_ast_node_t* parse_function_declaration(hyp_parser_t* parser) {
-    hyp_ast_node_t* node = create_node(parser, HYP_AST_FUNCTION);
+    hyp_ast_node_t* node = create_node(parser, AST_FUNCTION_DECL);
     if (!node) return NULL;
     
-    consume(parser, HYP_TOKEN_IDENTIFIER, "Expected function name");
-    node->as.function.name = copy_string(parser, parser->previous.start, parser->previous.length);
+    consume(parser, TOKEN_IDENTIFIER, "Expected function name");
+    node->function_decl.name = copy_string(parser, parser->previous.lexeme.data, parser->previous.lexeme.length);
     
-    consume(parser, HYP_TOKEN_LEFT_PAREN, "Expected '(' after function name");
+    consume(parser, TOKEN_LEFT_PAREN, "Expected '(' after function name");
     
-    HYP_ARRAY_INIT(node->as.function.parameters);
+    HYP_ARRAY_INIT(&node->function_decl.parameters);
     
-    if (!check(parser, HYP_TOKEN_RIGHT_PAREN)) {
+    if (!check(parser, TOKEN_RIGHT_PAREN)) {
         do {
-            hyp_parameter_t* param = hyp_arena_alloc(parser->arena, sizeof(hyp_parameter_t));
-            if (!param) break;
+            hyp_parameter_t param = {0};
             
-            consume(parser, HYP_TOKEN_IDENTIFIER, "Expected parameter name");
-            param->name = copy_string(parser, parser->previous.start, parser->previous.length);
-            param->type = NULL; /* Type inference for now */
+            consume(parser, TOKEN_IDENTIFIER, "Expected parameter name");
+            param.name = copy_string(parser, parser->previous.lexeme.data, parser->previous.lexeme.length);
+            param.type = NULL; /* Type inference for now */
             
-            HYP_ARRAY_PUSH(node->as.function.parameters, param);
-        } while (match(parser, HYP_TOKEN_COMMA));
+            HYP_ARRAY_PUSH(&node->function_decl.parameters, param);
+        } while (match(parser, TOKEN_COMMA));
     }
     
-    consume(parser, HYP_TOKEN_RIGHT_PAREN, "Expected ')' after parameters");
-    consume(parser, HYP_TOKEN_LEFT_BRACE, "Expected '{' before function body");
+    consume(parser, TOKEN_RIGHT_PAREN, "Expected ')' after parameters");
+    consume(parser, TOKEN_LEFT_BRACE, "Expected '{' before function body");
     
-    node->as.function.body = parse_block_statement(parser);
+    node->function_decl.body = parse_block_statement(parser);
     
     return node;
 }
 
 static hyp_ast_node_t* parse_declaration(hyp_parser_t* parser) {
-    if (match(parser, HYP_TOKEN_LET)) {
+    if (match(parser, TOKEN_LET)) {
         return parse_variable_declaration(parser, false);
     }
     
-    if (match(parser, HYP_TOKEN_CONST)) {
+    if (match(parser, TOKEN_CONST)) {
         return parse_variable_declaration(parser, true);
     }
     
-    if (match(parser, HYP_TOKEN_FN)) {
+    if (match(parser, TOKEN_FUNC)) {
         return parse_function_declaration(parser);
     }
     
@@ -654,15 +618,15 @@ void hyp_parser_destroy(hyp_parser_t* parser) {
 hyp_ast_node_t* hyp_parser_parse(hyp_parser_t* parser) {
     if (!parser) return NULL;
     
-    hyp_ast_node_t* program = create_node(parser, HYP_AST_PROGRAM);
+    hyp_ast_node_t* program = create_node(parser, AST_PROGRAM);
     if (!program) return NULL;
     
-    HYP_ARRAY_INIT(program->as.program.declarations);
+    HYP_ARRAY_INIT(&program->program.statements);
     
-    while (!match(parser, HYP_TOKEN_EOF)) {
+    while (!match(parser, TOKEN_EOF)) {
         hyp_ast_node_t* decl = parse_declaration(parser);
         if (decl) {
-            HYP_ARRAY_PUSH(program->as.program.declarations, decl);
+            HYP_ARRAY_PUSH(&program->program.statements, decl);
         }
         
         if (parser->panic_mode) {

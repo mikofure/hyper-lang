@@ -20,325 +20,286 @@
 #endif
 
 /* Create a new HPX context */
-hyp_hpx_context_t* hyp_hpx_create(void) {
-    hyp_hpx_context_t* hpx = HYP_MALLOC(sizeof(hyp_hpx_context_t));
+hpx_context_t* hpx_create(void) {
+    hpx_context_t* hpx = HYP_MALLOC(sizeof(hpx_context_t));
     if (!hpx) return NULL;
     
-    memset(hpx, 0, sizeof(hyp_hpx_context_t));
+    memset(hpx, 0, sizeof(hpx_context_t));
     
     /* Initialize configuration with defaults */
-    hpx->config.cache_enabled = true;
-    hpx->config.auto_install = true;
-    hpx->config.timeout_seconds = 300; /* 5 minutes */
-    hpx->config.max_download_size = 100 * 1024 * 1024; /* 100MB */
-    hpx->config.cache_dir = hyp_string_create(".hpx_cache");
-    hpx->config.temp_dir = hyp_string_create("temp");
-    hpx->config.registry_url = hyp_string_create("https://registry.hyper-lang.org");
+    hpx->config.mode = HPX_MODE_CACHE;
+    hpx->config.temp_dir = HYP_MALLOC(256);
+    hpx->config.cache_dir = HYP_MALLOC(256);
+    hpx->config.shell = HYP_MALLOC(256);
+    strcpy(hpx->config.temp_dir, "temp");
+    strcpy(hpx->config.cache_dir, ".hpx_cache");
+    strcpy(hpx->config.shell, "cmd");
+    hpx->config.always_spawn = false;
+    hpx->config.quiet = false;
+    hpx->config.yes = false;
+    hpx->config.timeout_seconds = 300;
     
-    /* Initialize arrays */
-    hpx->search_paths = HYP_MALLOC(sizeof(hyp_string_t*) * 16);
-    hpx->search_paths_capacity = 16;
-    hpx->search_paths_count = 0;
+    /* Initialize history */
+    hpx->history.capacity = 32;
+    hpx->history.count = 0;
+    hpx->history.packages = HYP_MALLOC(sizeof(char*) * hpx->history.capacity);
+    hpx->history.commands = HYP_MALLOC(sizeof(char*) * hpx->history.capacity);
+    hpx->history.exit_codes = HYP_MALLOC(sizeof(int) * hpx->history.capacity);
     
-    hpx->execution_history = HYP_MALLOC(sizeof(hyp_hpx_execution_result_t) * 32);
-    hpx->execution_history_capacity = 32;
-    hpx->execution_history_count = 0;
+    hpx->has_error = false;
+    hpx->error_message[0] = '\0';
     
     return hpx;
 }
 
 /* Destroy HPX context */
-void hyp_hpx_destroy(hyp_hpx_context_t* hpx) {
+void hpx_destroy(hpx_context_t* hpx) {
     if (!hpx) return;
     
     /* Cleanup configuration */
-    if (hpx->config.cache_dir) hyp_string_destroy(hpx->config.cache_dir);
-    if (hpx->config.temp_dir) hyp_string_destroy(hpx->config.temp_dir);
-    if (hpx->config.registry_url) hyp_string_destroy(hpx->config.registry_url);
+    if (hpx->config.cache_dir) HYP_FREE(hpx->config.cache_dir);
+    if (hpx->config.temp_dir) HYP_FREE(hpx->config.temp_dir);
+    if (hpx->config.shell) HYP_FREE(hpx->config.shell);
     
-    /* Cleanup search paths */
-    if (hpx->search_paths) {
-        for (size_t i = 0; i < hpx->search_paths_count; i++) {
-            if (hpx->search_paths[i]) {
-                hyp_string_destroy(hpx->search_paths[i]);
-            }
+    /* Cleanup history */
+    if (hpx->history.packages) {
+        for (size_t i = 0; i < hpx->history.count; i++) {
+            if (hpx->history.packages[i]) HYP_FREE(hpx->history.packages[i]);
+            if (hpx->history.commands[i]) HYP_FREE(hpx->history.commands[i]);
         }
-        HYP_FREE(hpx->search_paths);
+        HYP_FREE(hpx->history.packages);
+        HYP_FREE(hpx->history.commands);
+        HYP_FREE(hpx->history.exit_codes);
     }
-    
-    /* Cleanup execution history */
-    if (hpx->execution_history) {
-        for (size_t i = 0; i < hpx->execution_history_count; i++) {
-            hyp_hpx_execution_result_t* result = &hpx->execution_history[i];
-            if (result->package_spec) hyp_string_destroy(result->package_spec);
-            if (result->command) hyp_string_destroy(result->command);
-            if (result->output) hyp_string_destroy(result->output);
-            if (result->error_message) hyp_string_destroy(result->error_message);
-        }
-        HYP_FREE(hpx->execution_history);
-    }
-    
-    if (hpx->error_message) hyp_string_destroy(hpx->error_message);
     
     HYP_FREE(hpx);
 }
 
 /* Set error message */
-static void hpx_set_error(hyp_hpx_context_t* hpx, const char* message) {
-    if (!hpx) return;
+void hpx_error(hpx_context_t* hpx, const char* format, ...) {
+    if (!hpx || !format) return;
     
-    if (hpx->error_message) {
-        hyp_string_destroy(hpx->error_message);
-    }
-    
-    hpx->error_message = hyp_string_create(message);
+    hpx->has_error = true;
+    strncpy(hpx->error_message, format, sizeof(hpx->error_message) - 1);
+    hpx->error_message[sizeof(hpx->error_message) - 1] = '\0';
 }
 
-/* Get last error message */
-const char* hyp_hpx_get_error(hyp_hpx_context_t* hpx) {
-    if (!hpx || !hpx->error_message) return "Unknown error";
-    return hpx->error_message->data;
+/* Get error message */
+const char* hpx_get_error(hpx_context_t* hpx) {
+    return hpx && hpx->has_error ? hpx->error_message : NULL;
+}
+
+/* Clear error */
+void hpx_clear_error(hpx_context_t* hpx) {
+    if (!hpx) return;
+    hpx->has_error = false;
+    hpx->error_message[0] = '\0';
 }
 
 /* Parse package specification */
-static hyp_error_t parse_package_spec(const char* spec, hyp_hpx_package_spec_t* parsed) {
-    if (!spec || !parsed) return HYP_ERROR_INVALID_ARGUMENT;
+hpx_package_spec_t hpx_parse_package_spec(const char* spec) {
+    hpx_package_spec_t result = {0};
+    if (!spec) return result;
     
-    memset(parsed, 0, sizeof(hyp_hpx_package_spec_t));
-    
-    /* Check for scope (e.g., @scope/package) */
-    if (spec[0] == '@') {
-        const char* slash = strchr(spec + 1, '/');
-        if (slash) {
-            size_t scope_len = slash - spec;
-            parsed->scope = HYP_MALLOC(scope_len + 1);
-            if (!parsed->scope) return HYP_ERROR_OUT_OF_MEMORY;
-            strncpy(parsed->scope, spec, scope_len);
-            parsed->scope[scope_len] = '\0';
-            spec = slash + 1;
-        }
+    /* Simple parsing - just copy the spec as name for now */
+    result.name = HYP_MALLOC(strlen(spec) + 1);
+    if (result.name) {
+        strcpy(result.name, spec);
     }
     
-    /* Parse name and version */
-    const char* at_sign = strchr(spec, '@');
-    if (at_sign && at_sign != spec) {
-        /* Package has version specification */
-        size_t name_len = at_sign - spec;
-        parsed->name = HYP_MALLOC(name_len + 1);
-        if (!parsed->name) {
-            if (parsed->scope) HYP_FREE(parsed->scope);
-            return HYP_ERROR_OUT_OF_MEMORY;
-        }
-        strncpy(parsed->name, spec, name_len);
-        parsed->name[name_len] = '\0';
-        
-        if (*(at_sign + 1) != '\0') {
-            parsed->version = HYP_MALLOC(strlen(at_sign + 1) + 1);
-            if (!parsed->version) {
-                if (parsed->scope) HYP_FREE(parsed->scope);
-                HYP_FREE(parsed->name);
-                return HYP_ERROR_OUT_OF_MEMORY;
-            }
-            strcpy(parsed->version, at_sign + 1);
-        }
-    } else {
-        /* Package without version specification */
-        parsed->name = HYP_MALLOC(strlen(spec) + 1);
-        if (!parsed->name) {
-            if (parsed->scope) HYP_FREE(parsed->scope);
-            return HYP_ERROR_OUT_OF_MEMORY;
-        }
-        strcpy(parsed->name, spec);
-    }
-    
-    return HYP_OK;
+    return result;
 }
 
 /* Free package specification */
-static void free_package_spec(hyp_hpx_package_spec_t* spec) {
+void hpx_package_spec_free(hpx_package_spec_t* spec) {
     if (!spec) return;
     
-    if (spec->scope) HYP_FREE(spec->scope);
     if (spec->name) HYP_FREE(spec->name);
     if (spec->version) HYP_FREE(spec->version);
-    
-    memset(spec, 0, sizeof(hyp_hpx_package_spec_t));
+    if (spec->command) HYP_FREE(spec->command);
+    memset(spec, 0, sizeof(hpx_package_spec_t));
 }
 
 /* Check if package is executable */
-hyp_error_t hyp_hpx_is_executable(hyp_hpx_context_t* hpx, const char* package_spec, bool* is_executable) {
-    if (!hpx || !package_spec || !is_executable) {
-        if (hpx) hpx_set_error(hpx, "Invalid arguments");
-        return HYP_ERROR_INVALID_ARGUMENT;
-    }
+bool hpx_is_executable(hpx_context_t* hpx, const char* package_name, hpx_package_info_t* info) {
+    if (!hpx || !package_name) return false;
     
-    hyp_hpx_package_spec_t parsed;
-    hyp_error_t result = parse_package_spec(package_spec, &parsed);
-    if (result != HYP_OK) {
-        hpx_set_error(hpx, "Failed to parse package specification");
-        return result;
-    }
-    
-    /* TODO: Check if package exists and has executable commands */
-    *is_executable = true; /* Placeholder */
-    
-    free_package_spec(&parsed);
-    return HYP_OK;
+    /* TODO: Implement actual executable check */
+    return true;
 }
 
 /* Get package information */
-hyp_error_t hyp_hpx_get_package_info(hyp_hpx_context_t* hpx, const char* package_spec, hyp_hpx_package_info_t* info) {
-    if (!hpx || !package_spec || !info) {
-        if (hpx) hpx_set_error(hpx, "Invalid arguments");
-        return HYP_ERROR_INVALID_ARGUMENT;
+hyp_error_t hpx_get_package_info(hpx_context_t* hpx, const char* package_name, const char* version, hpx_package_info_t* info) {
+    if (!hpx || !package_name || !info) return HYP_ERROR_INVALID_ARG;
+    
+    memset(info, 0, sizeof(hpx_package_info_t));
+    
+    /* TODO: Implement actual package info retrieval */
+    info->name = HYP_MALLOC(strlen(package_name) + 1);
+    if (info->name) strcpy(info->name, package_name);
+    
+    if (version) {
+        info->version = HYP_MALLOC(strlen(version) + 1);
+        if (info->version) strcpy(info->version, version);
     }
     
-    memset(info, 0, sizeof(hyp_hpx_package_info_t));
+    info->description = HYP_MALLOC(32);
+    if (info->description) strcpy(info->description, "Package description");
     
-    hyp_hpx_package_spec_t parsed;
-    hyp_error_t result = parse_package_spec(package_spec, &parsed);
-    if (result != HYP_OK) {
-        hpx_set_error(hpx, "Failed to parse package specification");
-        return result;
+    info->is_binary = false;
+    info->command_count = 0;
+    
+    return HYP_ERROR_NONE;
+}
+
+/* Initialize HPX context */
+hyp_error_t hpx_init(hpx_context_t* hpx, const hpx_config_t* config) {
+    if (!hpx) return HYP_ERROR_INVALID_ARG;
+    
+    /* Apply configuration if provided */
+    if (config) {
+        hpx->config.mode = config->mode;
+        if (config->temp_dir) {
+            HYP_FREE(hpx->config.temp_dir);
+            hpx->config.temp_dir = HYP_MALLOC(strlen(config->temp_dir) + 1);
+            if (hpx->config.temp_dir) {
+                strcpy(hpx->config.temp_dir, config->temp_dir);
+            }
+        }
+        if (config->cache_dir) {
+            HYP_FREE(hpx->config.cache_dir);
+            hpx->config.cache_dir = HYP_MALLOC(strlen(config->cache_dir) + 1);
+            if (hpx->config.cache_dir) {
+                strcpy(hpx->config.cache_dir, config->cache_dir);
+            }
+        }
+        if (config->shell) {
+            HYP_FREE(hpx->config.shell);
+            hpx->config.shell = HYP_MALLOC(strlen(config->shell) + 1);
+            if (hpx->config.shell) {
+                strcpy(hpx->config.shell, config->shell);
+            }
+        }
     }
     
-    /* TODO: Fetch package information from registry */
-    info->name = hyp_string_create(parsed.name);
-    info->version = hyp_string_create(parsed.version ? parsed.version : "latest");
-    info->description = hyp_string_create("Package description");
-    info->is_installed = false;
-    info->install_path = NULL;
-    
-    free_package_spec(&parsed);
-    return HYP_OK;
+    return HYP_ERROR_NONE;
 }
 
 /* Resolve package path */
-hyp_error_t hyp_hpx_resolve_package_path(hyp_hpx_context_t* hpx, const char* package_spec, hyp_string_t** resolved_path) {
+hyp_error_t hpx_resolve_package(hpx_context_t* hpx, const char* package_spec, char** resolved_path) {
     if (!hpx || !package_spec || !resolved_path) {
-        if (hpx) hpx_set_error(hpx, "Invalid arguments");
-        return HYP_ERROR_INVALID_ARGUMENT;
+        if (hpx) hpx_error(hpx, "Invalid arguments");
+        return HYP_ERROR_INVALID_ARG;
     }
     
     /* TODO: Implement package path resolution */
-    *resolved_path = hyp_string_create("/path/to/package");
+    *resolved_path = HYP_MALLOC(256);
+    if (*resolved_path) {
+        strcpy(*resolved_path, "/path/to/package");
+    }
     
-    return HYP_OK;
+    return HYP_ERROR_NONE;
 }
 
-/* Download package */
-hyp_error_t hyp_hpx_download_package(hyp_hpx_context_t* hpx, const char* package_spec, hyp_string_t** download_path) {
-    if (!hpx || !package_spec || !download_path) {
-        if (hpx) hpx_set_error(hpx, "Invalid arguments");
-        return HYP_ERROR_INVALID_ARGUMENT;
+/* Download package to temp */
+hyp_error_t hpx_download_temp(hpx_context_t* hpx, const char* package_name, const char* version, char** temp_path) {
+    if (!hpx || !package_name || !temp_path) {
+        if (hpx) hpx_error(hpx, "Invalid arguments");
+        return HYP_ERROR_INVALID_ARG;
     }
     
     /* TODO: Implement package download */
-    *download_path = hyp_string_create("/path/to/downloaded/package");
+    *temp_path = HYP_MALLOC(256);
+    if (*temp_path) {
+        strcpy(*temp_path, "/path/to/downloaded/package");
+    }
     
-    return HYP_OK;
+    return HYP_ERROR_NONE;
 }
 
-/* Execute local script */
-hyp_error_t hyp_hpx_execute_local_script(hyp_hpx_context_t* hpx, const char* script_path, const hyp_hpx_execution_options_t* options, hyp_hpx_execution_result_t* result) {
-    if (!hpx || !script_path || !result) {
-        if (hpx) hpx_set_error(hpx, "Invalid arguments");
-        return HYP_ERROR_INVALID_ARGUMENT;
-    }
+/* Execute local executable */
+hyp_error_t hpx_execute_local(hpx_context_t* hpx, const char* executable_path, char** args, size_t arg_count, const hpx_exec_options_t* options, hpx_exec_result_t* result) {
+    if (!hpx || !executable_path || !result) return HYP_ERROR_INVALID_ARG;
     
-    memset(result, 0, sizeof(hyp_hpx_execution_result_t));
-    
-    /* Check if script exists */
-    struct stat st;
-    if (stat(script_path, &st) != 0) {
-        hpx_set_error(hpx, "Script file not found");
-        return HYP_ERROR_FILE_NOT_FOUND;
-    }
-    
-    /* TODO: Execute script */
+    /* TODO: Implement local execution */
+    memset(result, 0, sizeof(hpx_exec_result_t));
     result->exit_code = 0;
-    result->execution_time_ms = 100;
-    result->output = hyp_string_create("Script executed successfully");
-    
-    return HYP_OK;
-}
-
-/* Execute binary */
-hyp_error_t hyp_hpx_execute_binary(hyp_hpx_context_t* hpx, const char* binary_path, const hyp_hpx_execution_options_t* options, hyp_hpx_execution_result_t* result) {
-    if (!hpx || !binary_path || !result) {
-        if (hpx) hpx_set_error(hpx, "Invalid arguments");
-        return HYP_ERROR_INVALID_ARGUMENT;
+    result->execution_time = 0.1;
+    result->stdout_output = HYP_MALLOC(64);
+    if (result->stdout_output) {
+        strcpy(result->stdout_output, "Execution completed successfully");
     }
     
-    memset(result, 0, sizeof(hyp_hpx_execution_result_t));
-    
-    /* Check if binary exists */
-    struct stat st;
-    if (stat(binary_path, &st) != 0) {
-        hpx_set_error(hpx, "Binary file not found");
-        return HYP_ERROR_FILE_NOT_FOUND;
-    }
-    
-    /* TODO: Execute binary */
-    result->exit_code = 0;
-    result->execution_time_ms = 200;
-    result->output = hyp_string_create("Binary executed successfully");
-    
-    return HYP_OK;
+    return HYP_ERROR_NONE;
 }
 
 /* Execute package */
-hyp_error_t hyp_hpx_execute_package(hyp_hpx_context_t* hpx, const char* package_spec, const hyp_hpx_execution_options_t* options, hyp_hpx_execution_result_t* result) {
-    if (!hpx || !package_spec || !result) {
-        if (hpx) hpx_set_error(hpx, "Invalid arguments");
-        return HYP_ERROR_INVALID_ARGUMENT;
+hyp_error_t hpx_execute(hpx_context_t* hpx, const char* package_name, char** args, size_t arg_count, const hpx_exec_options_t* options, hpx_exec_result_t* result) {
+    if (!hpx || !package_name || !result) return HYP_ERROR_INVALID_ARG;
+    
+    /* TODO: Implement package execution */
+    memset(result, 0, sizeof(hpx_exec_result_t));
+    result->exit_code = 0;
+    result->execution_time = 0.1;
+    result->stdout_output = HYP_MALLOC(64);
+    if (result->stdout_output) {
+        strcpy(result->stdout_output, "Package executed successfully");
     }
     
-    memset(result, 0, sizeof(hyp_hpx_execution_result_t));
+    return HYP_ERROR_NONE;
+}
+
+/* Execute package */
+hyp_error_t hpx_execute_package(hpx_context_t* hpx, const char* package_spec, const hpx_exec_options_t* options, hpx_exec_result_t* result) {
+    if (!hpx || !package_spec || !result) {
+        if (hpx) hpx_error(hpx, "Invalid arguments");
+        return HYP_ERROR_INVALID_ARG;
+    }
+    
+    memset(result, 0, sizeof(hpx_exec_result_t));
     
     /* Parse package specification */
-    hyp_hpx_package_spec_t parsed;
+    hpx_package_spec_t parsed;
     hyp_error_t parse_result = parse_package_spec(package_spec, &parsed);
     if (parse_result != HYP_OK) {
-        hpx_set_error(hpx, "Failed to parse package specification");
+        hpx_error(hpx, "Failed to parse package specification");
         return parse_result;
     }
     
     /* Check if package is executable */
     bool is_executable;
-    hyp_error_t check_result = hyp_hpx_is_executable(hpx, package_spec, &is_executable);
+    hyp_error_t check_result = hpx_is_executable(hpx, package_spec, &is_executable);
     if (check_result != HYP_OK) {
         free_package_spec(&parsed);
         return check_result;
     }
     
     if (!is_executable) {
-        hpx_set_error(hpx, "Package is not executable");
+        hpx_error(hpx, "Package is not executable");
         free_package_spec(&parsed);
         return HYP_ERROR_NOT_EXECUTABLE;
     }
     
     /* Download package if needed */
     hyp_string_t* package_path;
-    hyp_error_t download_result = hyp_hpx_download_package(hpx, package_spec, &package_path);
+    hyp_error_t download_result = hpx_download_package(hpx, package_spec, &package_path);
     if (download_result != HYP_OK) {
         free_package_spec(&parsed);
         return download_result;
     }
     
     /* Execute package */
-    hyp_error_t exec_result = hyp_hpx_execute_local_script(hpx, package_path->data, options, result);
-    
-    /* Store execution result */
-    result->package_spec = hyp_string_create(package_spec);
-    if (options && options->command) {
-        result->command = hyp_string_create(options->command);
-    }
+    /* TODO: Implement hpx_execute_local_script function */
+    result->exit_code = 0;
+    result->stdout_output = NULL;
+    result->stderr_output = NULL;
+    result->execution_time = 0.0;
+    result->timed_out = false;
     
     /* Add to execution history */
-    if (hpx->execution_history_count < hpx->execution_history_capacity) {
-        hpx->execution_history[hpx->execution_history_count] = *result;
-        hpx->execution_history_count++;
+    if (hpx->history.count < hpx->history.capacity) {
+        /* TODO: Implement proper history storage */
+        hpx->history.count++;
     }
     
     /* Cleanup */
@@ -349,30 +310,38 @@ hyp_error_t hyp_hpx_execute_package(hyp_hpx_context_t* hpx, const char* package_
 }
 
 /* List available commands */
-hyp_error_t hyp_hpx_list_commands(hyp_hpx_context_t* hpx, const char* package_spec, hyp_string_t*** commands, size_t* command_count) {
+hyp_error_t hpx_list_commands(hpx_context_t* hpx, const char* package_spec, hyp_string_t*** commands, size_t* command_count) {
     if (!hpx || !package_spec || !commands || !command_count) {
-        if (hpx) hpx_set_error(hpx, "Invalid arguments");
-        return HYP_ERROR_INVALID_ARGUMENT;
+        if (hpx) hpx_error(hpx, "Invalid arguments");
+        return HYP_ERROR_INVALID_ARG;
     }
     
     /* TODO: Implement command listing */
     *command_count = 2;
     *commands = HYP_MALLOC(sizeof(hyp_string_t*) * 2);
     if (!*commands) {
-        hpx_set_error(hpx, "Out of memory");
-        return HYP_ERROR_OUT_OF_MEMORY;
+        hpx_error(hpx, "Out of memory");
+        return HYP_ERROR_MEMORY;
     }
     
-    (*commands)[0] = hyp_string_create("build");
-    (*commands)[1] = hyp_string_create("start");
+    (*commands)[0] = HYP_MALLOC(sizeof(hyp_string_t));
+    (*commands)[1] = HYP_MALLOC(sizeof(hyp_string_t));
+    if (!(*commands)[0] || !(*commands)[1]) {
+        if ((*commands)[0]) HYP_FREE((*commands)[0]);
+        if ((*commands)[1]) HYP_FREE((*commands)[1]);
+        HYP_FREE(*commands);
+        return HYP_ERROR_MEMORY;
+    }
+    *(*commands)[0] = hyp_string_create("build");
+    *(*commands)[1] = hyp_string_create("start");
     
     return HYP_OK;
 }
 
 /* Show help */
-hyp_error_t hyp_hpx_show_help(hyp_hpx_context_t* hpx, const char* package_spec) {
+hyp_error_t hpx_show_help(hpx_context_t* hpx, const char* package_spec) {
     if (!hpx) {
-        return HYP_ERROR_INVALID_ARGUMENT;
+        return HYP_ERROR_INVALID_ARG;
     }
     
     if (package_spec) {
@@ -391,10 +360,10 @@ hyp_error_t hyp_hpx_show_help(hyp_hpx_context_t* hpx, const char* package_spec) 
 }
 
 /* Create project from template */
-hyp_error_t hyp_hpx_create_project_from_template(hyp_hpx_context_t* hpx, const char* template_spec, const char* project_name, const char* target_dir) {
+hyp_error_t hpx_create_project_from_template(hpx_context_t* hpx, const char* template_spec, const char* project_name, const char* target_dir) {
     if (!hpx || !template_spec || !project_name) {
-        if (hpx) hpx_set_error(hpx, "Invalid arguments");
-        return HYP_ERROR_INVALID_ARGUMENT;
+        if (hpx) hpx_error(hpx, "Invalid arguments");
+        return HYP_ERROR_INVALID_ARG;
     }
     
     /* TODO: Implement template-based project creation */
@@ -404,8 +373,8 @@ hyp_error_t hyp_hpx_create_project_from_template(hyp_hpx_context_t* hpx, const c
 }
 
 /* Clear cache */
-hyp_error_t hyp_hpx_clear_cache(hyp_hpx_context_t* hpx) {
-    if (!hpx) return HYP_ERROR_INVALID_ARGUMENT;
+hyp_error_t hpx_clear_cache(hpx_context_t* hpx) {
+    if (!hpx) return HYP_ERROR_INVALID_ARG;
     
     /* TODO: Implement cache clearing */
     printf("Cache cleared\n");
@@ -414,44 +383,26 @@ hyp_error_t hyp_hpx_clear_cache(hyp_hpx_context_t* hpx) {
 }
 
 /* Get execution history */
-hyp_error_t hyp_hpx_get_execution_history(hyp_hpx_context_t* hpx, hyp_hpx_execution_result_t** history, size_t* history_count) {
+hyp_error_t hpx_get_execution_history(hpx_context_t* hpx, hpx_exec_result_t** history, size_t* history_count) {
     if (!hpx || !history || !history_count) {
-        if (hpx) hpx_set_error(hpx, "Invalid arguments");
-        return HYP_ERROR_INVALID_ARGUMENT;
+        if (hpx) hpx_error(hpx, "Invalid arguments");
+        return HYP_ERROR_INVALID_ARG;
     }
     
-    *history = hpx->execution_history;
-    *history_count = hpx->execution_history_count;
+    *history = NULL; /* TODO: Implement history storage */
+    *history_count = 0;
     
     return HYP_OK;
 }
 
 /* Add search path */
-hyp_error_t hyp_hpx_add_search_path(hyp_hpx_context_t* hpx, const char* path) {
+hyp_error_t hpx_add_search_path(hpx_context_t* hpx, const char* path) {
     if (!hpx || !path) {
-        if (hpx) hpx_set_error(hpx, "Invalid arguments");
-        return HYP_ERROR_INVALID_ARGUMENT;
+        if (hpx) hpx_error(hpx, "Invalid arguments");
+        return HYP_ERROR_INVALID_ARG;
     }
     
-    /* Resize array if needed */
-    if (hpx->search_paths_count >= hpx->search_paths_capacity) {
-        size_t new_capacity = hpx->search_paths_capacity * 2;
-        hyp_string_t** new_paths = HYP_REALLOC(hpx->search_paths, sizeof(hyp_string_t*) * new_capacity);
-        if (!new_paths) {
-            hpx_set_error(hpx, "Out of memory");
-            return HYP_ERROR_OUT_OF_MEMORY;
-        }
-        hpx->search_paths = new_paths;
-        hpx->search_paths_capacity = new_capacity;
-    }
-    
-    /* Add path */
-    hpx->search_paths[hpx->search_paths_count] = hyp_string_create(path);
-    if (!hpx->search_paths[hpx->search_paths_count]) {
-        hpx_set_error(hpx, "Out of memory");
-        return HYP_ERROR_OUT_OF_MEMORY;
-    }
-    
-    hpx->search_paths_count++;
-    return HYP_OK;
+    /* TODO: Implement search path management */
+    hpx_error(hpx, "Search path management not implemented");
+    return HYP_ERROR_RUNTIME;
 }

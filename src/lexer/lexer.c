@@ -15,38 +15,38 @@ static const struct {
     const char* keyword;
     hyp_token_type_t type;
 } keywords[] = {
-    {"let", HYP_TOKEN_LET},
-    {"const", HYP_TOKEN_CONST},
-    {"fn", HYP_TOKEN_FN},
-    {"if", HYP_TOKEN_IF},
-    {"else", HYP_TOKEN_ELSE},
-    {"while", HYP_TOKEN_WHILE},
-    {"for", HYP_TOKEN_FOR},
-    {"in", HYP_TOKEN_IN},
-    {"return", HYP_TOKEN_RETURN},
-    {"break", HYP_TOKEN_BREAK},
-    {"continue", HYP_TOKEN_CONTINUE},
-    {"match", HYP_TOKEN_MATCH},
-    {"case", HYP_TOKEN_CASE},
-    {"default", HYP_TOKEN_DEFAULT},
-    {"struct", HYP_TOKEN_STRUCT},
-    {"enum", HYP_TOKEN_ENUM},
-    {"import", HYP_TOKEN_IMPORT},
-    {"export", HYP_TOKEN_EXPORT},
-    {"module", HYP_TOKEN_MODULE},
-    {"true", HYP_TOKEN_TRUE},
-    {"false", HYP_TOKEN_FALSE},
-    {"null", HYP_TOKEN_NULL},
-    {"and", HYP_TOKEN_AND},
-    {"or", HYP_TOKEN_OR},
-    {"not", HYP_TOKEN_NOT},
-    {"async", HYP_TOKEN_ASYNC},
-    {"await", HYP_TOKEN_AWAIT},
-    {"try", HYP_TOKEN_TRY},
-    {"catch", HYP_TOKEN_CATCH},
-    {"finally", HYP_TOKEN_FINALLY},
-    {"throw", HYP_TOKEN_THROW},
-    {"state", HYP_TOKEN_STATE}
+    {"let", TOKEN_LET},
+    {"const", TOKEN_CONST},
+    {"fn", TOKEN_FUNC},
+    {"if", TOKEN_IF},
+    {"else", TOKEN_ELSE},
+    {"while", TOKEN_WHILE},
+    {"for", TOKEN_FOR},
+    {"in", TOKEN_IN},
+    {"return", TOKEN_RETURN},
+    {"break", TOKEN_BREAK},
+    {"continue", TOKEN_CONTINUE},
+    {"match", TOKEN_MATCH},
+    {"case", TOKEN_CASE},
+    {"default", TOKEN_DEFAULT},
+    {"struct", TOKEN_STRUCT},
+    {"enum", TOKEN_ENUM},
+    {"import", TOKEN_IMPORT},
+    {"export", TOKEN_EXPORT},
+    {"module", TOKEN_MODULE},
+    {"true", TOKEN_TRUE},
+    {"false", TOKEN_FALSE},
+    {"null", TOKEN_NULL},
+    {"and", TOKEN_AND},
+    {"or", TOKEN_OR},
+    {"not", TOKEN_NOT},
+    {"async", TOKEN_ASYNC},
+    {"await", TOKEN_AWAIT},
+    {"try", TOKEN_TRY},
+    {"catch", TOKEN_CATCH},
+    {"finally", TOKEN_FINALLY},
+    {"throw", TOKEN_THROW},
+    {"state", TOKEN_STATE}
 };
 
 #define KEYWORD_COUNT (sizeof(keywords) / sizeof(keywords[0]))
@@ -59,14 +59,21 @@ hyp_lexer_t* hyp_lexer_create(const char* source, const char* filename) {
     if (!lexer) return NULL;
     
     lexer->source = source;
-    lexer->filename = filename ? filename : "<unknown>";
-    lexer->current = source;
+    lexer->source_length = strlen(source);
+    lexer->current = 0;
     lexer->line = 1;
     lexer->column = 1;
-    lexer->start = source;
-    lexer->arena = hyp_arena_create(8192); /* 8KB arena for tokens */
     lexer->jsx_depth = 0; /* Track JSX nesting depth */
     lexer->in_jsx = false; /* Track if we're inside JSX */
+    lexer->has_error = false;
+    lexer->error_message[0] = '\0';
+    
+    /* Initialize token array */
+    lexer->tokens.data = NULL;
+    lexer->tokens.count = 0;
+    lexer->tokens.capacity = 0;
+    
+    lexer->arena = hyp_arena_create(8192); /* 8KB arena for tokens */
     
     if (!lexer->arena) {
         HYP_FREE(lexer);
@@ -88,13 +95,13 @@ void hyp_lexer_destroy(hyp_lexer_t* lexer) {
 
 /* Character utilities */
 static bool is_at_end(hyp_lexer_t* lexer) {
-    return *lexer->current == '\0';
+    return lexer->current >= lexer->source_length || lexer->source[lexer->current] == '\0';
 }
 
 static char advance(hyp_lexer_t* lexer) {
     if (is_at_end(lexer)) return '\0';
     
-    char c = *lexer->current++;
+    char c = lexer->source[lexer->current++];
     if (c == '\n') {
         lexer->line++;
         lexer->column = 1;
@@ -106,43 +113,46 @@ static char advance(hyp_lexer_t* lexer) {
 }
 
 static char peek(hyp_lexer_t* lexer) {
-    return *lexer->current;
+    if (is_at_end(lexer)) return '\0';
+    return lexer->source[lexer->current];
 }
 
 static char peek_next(hyp_lexer_t* lexer) {
-    if (is_at_end(lexer)) return '\0';
-    return lexer->current[1];
+    if (lexer->current + 1 >= lexer->source_length) return '\0';
+    return lexer->source[lexer->current + 1];
 }
 
 static bool match(hyp_lexer_t* lexer, char expected) {
     if (is_at_end(lexer)) return false;
-    if (*lexer->current != expected) return false;
+    if (lexer->source[lexer->current] != expected) return false;
     
     advance(lexer);
     return true;
 }
 
 /* Token creation */
-static hyp_token_t make_token(hyp_lexer_t* lexer, hyp_token_type_t type) {
+static hyp_token_t make_token(hyp_lexer_t* lexer, hyp_token_type_t type, size_t start_pos) {
     hyp_token_t token;
     token.type = type;
-    token.start = lexer->start;
-    token.length = (size_t)(lexer->current - lexer->start);
+    token.lexeme.data = (char*)(lexer->source + start_pos);
+    token.lexeme.length = lexer->current - start_pos;
+    token.lexeme.capacity = 0;
     token.line = lexer->line;
-    token.column = lexer->column - token.length;
-    token.filename = lexer->filename;
+    token.column = lexer->column;
+    token.position = start_pos;
     
     return token;
 }
 
 static hyp_token_t error_token(hyp_lexer_t* lexer, const char* message) {
     hyp_token_t token;
-    token.type = HYP_TOKEN_ERROR;
-    token.start = message;
-    token.length = strlen(message);
+    token.type = TOKEN_ERROR;
+    token.lexeme.data = (char*)message;
+    token.lexeme.length = strlen(message);
+    token.lexeme.capacity = 0;
     token.line = lexer->line;
     token.column = lexer->column;
-    token.filename = lexer->filename;
+    token.position = lexer->current;
     
     return token;
 }
@@ -190,7 +200,7 @@ static void skip_whitespace(hyp_lexer_t* lexer) {
 }
 
 /* Scan string literal */
-static hyp_token_t scan_string(hyp_lexer_t* lexer, char quote) {
+static hyp_token_t scan_string(hyp_lexer_t* lexer, char quote, size_t start) {
     while (peek(lexer) != quote && !is_at_end(lexer)) {
         if (peek(lexer) == '\n') {
             /* Multi-line strings allowed */
@@ -211,11 +221,11 @@ static hyp_token_t scan_string(hyp_lexer_t* lexer, char quote) {
     
     /* Closing quote */
     advance(lexer);
-    return make_token(lexer, HYP_TOKEN_STRING);
+    return make_token(lexer, TOKEN_STRING, start);
 }
 
 /* Scan number literal */
-static hyp_token_t scan_number(hyp_lexer_t* lexer) {
+static hyp_token_t scan_number(hyp_lexer_t* lexer, size_t start) {
     while (isdigit(peek(lexer))) {
         advance(lexer);
     }
@@ -239,7 +249,7 @@ static hyp_token_t scan_number(hyp_lexer_t* lexer) {
         }
     }
     
-    return make_token(lexer, HYP_TOKEN_NUMBER);
+    return make_token(lexer, TOKEN_NUMBER, start);
 }
 
 /* Check if identifier is a keyword */
@@ -250,39 +260,39 @@ static hyp_token_type_t check_keyword(const char* start, size_t length) {
             return keywords[i].type;
         }
     }
-    return HYP_TOKEN_IDENTIFIER;
+    return TOKEN_IDENTIFIER;
 }
 
 /* Scan identifier or keyword */
-static hyp_token_t scan_identifier(hyp_lexer_t* lexer) {
+static hyp_token_t scan_identifier(hyp_lexer_t* lexer, size_t start) {
     while (isalnum(peek(lexer)) || peek(lexer) == '_') {
         advance(lexer);
     }
     
-    hyp_token_type_t type = check_keyword(lexer->start, 
-                                         (size_t)(lexer->current - lexer->start));
-    return make_token(lexer, type);
+    hyp_token_type_t type = check_keyword(lexer->source + start, 
+                                         lexer->current - start);
+    return make_token(lexer, type, start);
 }
 
 /* Scan JSX tag name or attribute */
-static hyp_token_t scan_jsx_identifier(hyp_lexer_t* lexer) {
+static hyp_token_t scan_jsx_identifier(hyp_lexer_t* lexer, size_t start) {
     while (isalnum(peek(lexer)) || peek(lexer) == '_' || peek(lexer) == '-') {
         advance(lexer);
     }
-    return make_token(lexer, HYP_TOKEN_JSX_ATTRIBUTE);
+    return make_token(lexer, TOKEN_JSX_ATTRIBUTE, start);
 }
 
 /* Scan JSX text content */
-static hyp_token_t scan_jsx_text(hyp_lexer_t* lexer) {
+static hyp_token_t scan_jsx_text(hyp_lexer_t* lexer, size_t start) {
     while (!is_at_end(lexer) && peek(lexer) != '<' && peek(lexer) != '{') {
         if (peek(lexer) == '\n') lexer->line++;
         advance(lexer);
     }
-    return make_token(lexer, HYP_TOKEN_JSX_TEXT);
+    return make_token(lexer, TOKEN_JSX_TEXT, start);
 }
 
 /* Scan JSX expression inside {} */
-static hyp_token_t scan_jsx_expression(hyp_lexer_t* lexer) {
+static hyp_token_t scan_jsx_expression(hyp_lexer_t* lexer, size_t start) {
     int brace_count = 1;
     advance(lexer); /* consume opening { */
     
@@ -294,153 +304,153 @@ static hyp_token_t scan_jsx_expression(hyp_lexer_t* lexer) {
         advance(lexer);
     }
     
-    return make_token(lexer, HYP_TOKEN_JSX_EXPRESSION);
+    return make_token(lexer, TOKEN_JSX_EXPRESSION, start);
 }
 
 /* Main tokenization function */
 hyp_token_t hyp_lexer_scan_token(hyp_lexer_t* lexer) {
     if (!lexer) {
         hyp_token_t error = {0};
-        error.type = HYP_TOKEN_ERROR;
+        error.type = TOKEN_ERROR;
         return error;
     }
     
     skip_whitespace(lexer);
     
-    lexer->start = lexer->current;
+    size_t start = lexer->current;
     
     if (is_at_end(lexer)) {
-        return make_token(lexer, HYP_TOKEN_EOF);
+        return make_token(lexer, TOKEN_EOF, start);
     }
     
     char c = advance(lexer);
     
     /* JSX text content */
     if (lexer->in_jsx && !isalpha(c) && c != '<' && c != '{' && c != '}' && c != '>' && c != '/') {
-        return scan_jsx_text(lexer);
+        return scan_jsx_text(lexer, start);
     }
     
     /* Identifiers and keywords */
     if (isalpha(c) || c == '_') {
         if (lexer->in_jsx) {
-            return scan_jsx_identifier(lexer);
+            return scan_jsx_identifier(lexer, start);
         }
-        return scan_identifier(lexer);
+        return scan_identifier(lexer, start);
     }
     
     /* Numbers */
     if (isdigit(c)) {
-        return scan_number(lexer);
+        return scan_number(lexer, start);
     }
     
     /* Single-character tokens */
     switch (c) {
-        case '(': return make_token(lexer, HYP_TOKEN_LEFT_PAREN);
-        case ')': return make_token(lexer, HYP_TOKEN_RIGHT_PAREN);
+        case '(': return make_token(lexer, TOKEN_LEFT_PAREN, start);
+        case ')': return make_token(lexer, TOKEN_RIGHT_PAREN, start);
         case '{':
             if (lexer->in_jsx) {
-                return scan_jsx_expression(lexer);
+                return scan_jsx_expression(lexer, start);
             }
-            return make_token(lexer, HYP_TOKEN_LEFT_BRACE);
-        case '}': return make_token(lexer, HYP_TOKEN_RIGHT_BRACE);
-        case '[': return make_token(lexer, HYP_TOKEN_LEFT_BRACKET);
-        case ']': return make_token(lexer, HYP_TOKEN_RIGHT_BRACKET);
-        case ',': return make_token(lexer, HYP_TOKEN_COMMA);
-        case '.': return make_token(lexer, HYP_TOKEN_DOT);
-        case ';': return make_token(lexer, HYP_TOKEN_SEMICOLON);
-        case ':': return make_token(lexer, HYP_TOKEN_COLON);
-        case '?': return make_token(lexer, HYP_TOKEN_QUESTION);
-        case '~': return make_token(lexer, HYP_TOKEN_TILDE);
+            return make_token(lexer, TOKEN_LEFT_BRACE, start);
+        case '}': return make_token(lexer, TOKEN_RIGHT_BRACE, start);
+        case '[': return make_token(lexer, TOKEN_LEFT_BRACKET, start);
+        case ']': return make_token(lexer, TOKEN_RIGHT_BRACKET, start);
+        case ',': return make_token(lexer, TOKEN_COMMA, start);
+        case '.': return make_token(lexer, TOKEN_DOT, start);
+        case ';': return make_token(lexer, TOKEN_SEMICOLON, start);
+        case ':': return make_token(lexer, TOKEN_COLON, start);
+        case '?': return make_token(lexer, TOKEN_QUESTION, start);
+        case '~': return make_token(lexer, TOKEN_TILDE, start);
         
         /* String literals */
         case '"':
         case '\'':
-            return scan_string(lexer, c);
+            return scan_string(lexer, c, start);
         
         /* Two-character tokens */
         case '!':
-            return make_token(lexer, match(lexer, '=') ? HYP_TOKEN_BANG_EQUAL : HYP_TOKEN_BANG);
+            return make_token(lexer, match(lexer, '=') ? TOKEN_NOT_EQUAL : TOKEN_NOT, start);
         case '=':
             if (match(lexer, '=')) {
-                return make_token(lexer, HYP_TOKEN_EQUAL_EQUAL);
+                return make_token(lexer, TOKEN_EQUAL, start);
             } else if (match(lexer, '>')) {
-                return make_token(lexer, HYP_TOKEN_ARROW);
+                return make_token(lexer, TOKEN_ARROW, start);
             }
-            return make_token(lexer, HYP_TOKEN_EQUAL);
+            return make_token(lexer, TOKEN_ASSIGN, start);
         case '<':
             if (match(lexer, '=')) {
-                return make_token(lexer, HYP_TOKEN_LESS_EQUAL);
+                return make_token(lexer, TOKEN_LESS_EQUAL, start);
             } else if (match(lexer, '<')) {
-                return make_token(lexer, HYP_TOKEN_LEFT_SHIFT);
+                return make_token(lexer, TOKEN_LEFT_SHIFT, start);
             } else if (match(lexer, '/')) {
-                return make_token(lexer, HYP_TOKEN_JSX_END_TAG);
+                return make_token(lexer, TOKEN_JSX_END_TAG, start);
             } else if (isalpha(peek(lexer))) {
                 /* Potential JSX tag */
                 lexer->in_jsx = true;
                 lexer->jsx_depth++;
-                return make_token(lexer, HYP_TOKEN_JSX_OPEN_TAG);
+                return make_token(lexer, TOKEN_JSX_OPEN_TAG, start);
             }
-            return make_token(lexer, HYP_TOKEN_LESS);
+            return make_token(lexer, TOKEN_LESS, start);
         case '>':
             if (match(lexer, '=')) {
-                return make_token(lexer, HYP_TOKEN_GREATER_EQUAL);
+                return make_token(lexer, TOKEN_GREATER_EQUAL, start);
             } else if (match(lexer, '>')) {
-                return make_token(lexer, HYP_TOKEN_RIGHT_SHIFT);
+                return make_token(lexer, TOKEN_RIGHT_SHIFT, start);
             } else if (lexer->in_jsx) {
-                return make_token(lexer, HYP_TOKEN_JSX_CLOSE_TAG);
+                return make_token(lexer, TOKEN_JSX_CLOSE_TAG, start);
             }
-            return make_token(lexer, HYP_TOKEN_GREATER);
+            return make_token(lexer, TOKEN_GREATER, start);
         case '+':
             if (match(lexer, '=')) {
-                return make_token(lexer, HYP_TOKEN_PLUS_EQUAL);
+                return make_token(lexer, TOKEN_PLUS_ASSIGN, start);
             } else if (match(lexer, '+')) {
-                return make_token(lexer, HYP_TOKEN_PLUS_PLUS);
+                return make_token(lexer, TOKEN_INCREMENT, start);
             }
-            return make_token(lexer, HYP_TOKEN_PLUS);
+            return make_token(lexer, TOKEN_PLUS, start);
         case '-':
             if (match(lexer, '=')) {
-                return make_token(lexer, HYP_TOKEN_MINUS_EQUAL);
+                return make_token(lexer, TOKEN_MINUS_ASSIGN, start);
             } else if (match(lexer, '-')) {
-                return make_token(lexer, HYP_TOKEN_MINUS_MINUS);
+                return make_token(lexer, TOKEN_DECREMENT, start);
             }
-            return make_token(lexer, HYP_TOKEN_MINUS);
+            return make_token(lexer, TOKEN_MINUS, start);
         case '*':
             if (match(lexer, '=')) {
-                return make_token(lexer, HYP_TOKEN_STAR_EQUAL);
+                return make_token(lexer, TOKEN_MUL_ASSIGN, start);
             } else if (match(lexer, '*')) {
-                return make_token(lexer, HYP_TOKEN_STAR_STAR);
+                return make_token(lexer, TOKEN_POWER, start);
             }
-            return make_token(lexer, HYP_TOKEN_STAR);
+            return make_token(lexer, TOKEN_STAR, start);
         case '/':
             if (match(lexer, '=')) {
-                return make_token(lexer, HYP_TOKEN_SLASH_EQUAL);
+                return make_token(lexer, TOKEN_DIV_ASSIGN, start);
             } else if (match(lexer, '>') && lexer->in_jsx) {
                 /* JSX self-closing tag */
                 lexer->jsx_depth--;
                 if (lexer->jsx_depth == 0) {
                     lexer->in_jsx = false;
                 }
-                return make_token(lexer, HYP_TOKEN_JSX_SELF_CLOSE);
+                return make_token(lexer, TOKEN_JSX_SELF_CLOSE, start);
             }
-            return make_token(lexer, HYP_TOKEN_SLASH);
+            return make_token(lexer, TOKEN_SLASH, start);
         case '%':
-            return make_token(lexer, match(lexer, '=') ? HYP_TOKEN_PERCENT_EQUAL : HYP_TOKEN_PERCENT);
+            return make_token(lexer, match(lexer, '=') ? TOKEN_PERCENT_EQUAL : TOKEN_PERCENT, start);
         case '&':
             if (match(lexer, '&')) {
-                return make_token(lexer, HYP_TOKEN_AND_AND);
+                return make_token(lexer, TOKEN_AND, start);
             } else if (match(lexer, '=')) {
-                return make_token(lexer, HYP_TOKEN_AND_EQUAL);
+                return make_token(lexer, TOKEN_AND_EQUAL, start);
             }
-            return make_token(lexer, HYP_TOKEN_AMPERSAND);
+            return make_token(lexer, TOKEN_AMPERSAND, start);
         case '|':
             if (match(lexer, '|')) {
-                return make_token(lexer, HYP_TOKEN_OR_OR);
+                return make_token(lexer, TOKEN_OR, start);
             } else if (match(lexer, '=')) {
-                return make_token(lexer, HYP_TOKEN_OR_EQUAL);
+                return make_token(lexer, TOKEN_OR_EQUAL, start);
             }
-            return make_token(lexer, HYP_TOKEN_PIPE);
+            return make_token(lexer, TOKEN_PIPE, start);
         case '^':
-            return make_token(lexer, match(lexer, '=') ? HYP_TOKEN_XOR_EQUAL : HYP_TOKEN_CARET);
+            return make_token(lexer, match(lexer, '=') ? TOKEN_XOR_EQUAL : TOKEN_CARET, start);
     }
     
     return error_token(lexer, "Unexpected character");
@@ -449,47 +459,51 @@ hyp_token_t hyp_lexer_scan_token(hyp_lexer_t* lexer) {
 /* Utility functions */
 const char* hyp_token_type_name(hyp_token_type_t type) {
     switch (type) {
-        case HYP_TOKEN_IDENTIFIER: return "IDENTIFIER";
-        case HYP_TOKEN_NUMBER: return "NUMBER";
-        case HYP_TOKEN_STRING: return "STRING";
-        case HYP_TOKEN_LET: return "LET";
-        case HYP_TOKEN_CONST: return "CONST";
-        case HYP_TOKEN_FN: return "FN";
-        case HYP_TOKEN_IF: return "IF";
-        case HYP_TOKEN_ELSE: return "ELSE";
-        case HYP_TOKEN_WHILE: return "WHILE";
-        case HYP_TOKEN_FOR: return "FOR";
-        case HYP_TOKEN_RETURN: return "RETURN";
-        case HYP_TOKEN_TRUE: return "TRUE";
-        case HYP_TOKEN_FALSE: return "FALSE";
-        case HYP_TOKEN_NULL: return "NULL";
-        case HYP_TOKEN_LEFT_PAREN: return "LEFT_PAREN";
-        case HYP_TOKEN_RIGHT_PAREN: return "RIGHT_PAREN";
-        case HYP_TOKEN_LEFT_BRACE: return "LEFT_BRACE";
-        case HYP_TOKEN_RIGHT_BRACE: return "RIGHT_BRACE";
-        case HYP_TOKEN_COMMA: return "COMMA";
-        case HYP_TOKEN_DOT: return "DOT";
-        case HYP_TOKEN_SEMICOLON: return "SEMICOLON";
-        case HYP_TOKEN_PLUS: return "PLUS";
-        case HYP_TOKEN_MINUS: return "MINUS";
-        case HYP_TOKEN_STAR: return "STAR";
-        case HYP_TOKEN_SLASH: return "SLASH";
-        case HYP_TOKEN_EQUAL: return "EQUAL";
-        case HYP_TOKEN_EQUAL_EQUAL: return "EQUAL_EQUAL";
-        case HYP_TOKEN_BANG_EQUAL: return "BANG_EQUAL";
-        case HYP_TOKEN_LESS: return "LESS";
-        case HYP_TOKEN_GREATER: return "GREATER";
-        case HYP_TOKEN_EOF: return "EOF";
-        case HYP_TOKEN_ERROR: return "ERROR";
+        case TOKEN_IDENTIFIER: return "IDENTIFIER";
+        case TOKEN_NUMBER: return "NUMBER";
+        case TOKEN_STRING: return "STRING";
+        case TOKEN_LET: return "LET";
+        case TOKEN_CONST: return "CONST";
+        case TOKEN_FUNC: return "FUNC";
+        case TOKEN_IF: return "IF";
+        case TOKEN_ELSE: return "ELSE";
+        case TOKEN_WHILE: return "WHILE";
+        case TOKEN_FOR: return "FOR";
+        case TOKEN_RETURN: return "RETURN";
+        case TOKEN_TRUE: return "TRUE";
+        case TOKEN_FALSE: return "FALSE";
+        case TOKEN_NULL: return "NULL";
+        case TOKEN_LEFT_PAREN: return "LEFT_PAREN";
+        case TOKEN_RIGHT_PAREN: return "RIGHT_PAREN";
+        case TOKEN_LEFT_BRACE: return "LEFT_BRACE";
+        case TOKEN_RIGHT_BRACE: return "RIGHT_BRACE";
+        case TOKEN_COMMA: return "COMMA";
+        case TOKEN_DOT: return "DOT";
+        case TOKEN_SEMICOLON: return "SEMICOLON";
+        case TOKEN_PLUS: return "PLUS";
+        case TOKEN_MINUS: return "MINUS";
+        case TOKEN_STAR: return "STAR";
+        case TOKEN_SLASH: return "SLASH";
+        case TOKEN_ASSIGN: return "ASSIGN";
+        case TOKEN_EQUAL: return "EQUAL";
+        case TOKEN_NOT_EQUAL: return "NOT_EQUAL";
+        case TOKEN_LESS: return "LESS";
+        case TOKEN_GREATER: return "GREATER";
+        case TOKEN_EOF: return "EOF";
+        case TOKEN_ERROR: return "ERROR";
         default: return "UNKNOWN";
     }
+}
+
+hyp_token_t hyp_lexer_next_token(hyp_lexer_t* lexer) {
+    return hyp_lexer_scan_token(lexer);
 }
 
 void hyp_token_print(const hyp_token_t* token) {
     if (!token) return;
     
-    printf("Token: %s \"%.*s\" at %s:%zu:%zu\n",
+    printf("Token: %s \"%.*s\" at line %zu, column %zu\n",
            hyp_token_type_name(token->type),
-           (int)token->length, token->start,
-           token->filename, token->line, token->column);
+           (int)token->lexeme.length, token->lexeme.data,
+           token->line, token->column);
 }

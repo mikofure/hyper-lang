@@ -169,6 +169,12 @@ struct hyp_runtime {
 /* Function declarations */
 
 /**
+ * Create a new runtime instance
+ * @return New runtime instance, or NULL on failure
+ */
+hyp_runtime_t* hyp_runtime_create(void);
+
+/**
  * Initialize runtime with configuration
  * @param runtime The runtime to initialize
  * @param config Runtime configuration
@@ -234,6 +240,7 @@ hyp_environment_t* hyp_environment_create(hyp_environment_t* parent);
 void hyp_environment_define(hyp_environment_t* env, const char* name, hyp_value_t value);
 hyp_value_t hyp_environment_get(hyp_environment_t* env, const char* name);
 void hyp_environment_set(hyp_environment_t* env, const char* name, hyp_value_t value);
+hyp_error_t hyp_environment_assign(hyp_environment_t* env, const char* name, hyp_value_t value);
 void hyp_environment_destroy(hyp_environment_t* env);
 
 /* Stack operations */
@@ -268,8 +275,12 @@ void hyp_gc_mark_object(hyp_runtime_t* runtime, hyp_object_t* object);
 void hyp_gc_sweep(hyp_runtime_t* runtime);
 void hyp_gc_collect(hyp_runtime_t* runtime);
 
+/* AST execution */
+hyp_error_t hyp_runtime_execute_ast(hyp_runtime_t* runtime, hyp_ast_node_t* ast);
+
 /* Error handling */
 void hyp_runtime_error(hyp_runtime_t* runtime, const char* format, ...);
+const char* hyp_runtime_get_error(hyp_runtime_t* runtime);
 void hyp_runtime_clear_error(hyp_runtime_t* runtime);
 
 /* Event system */

@@ -12,7 +12,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <getopt.h>
 
 #define HYPRUN_VERSION "0.1.0"
 
@@ -84,57 +83,47 @@ static file_type_t get_file_type(const char* filename) {
 
 /* Parse command-line arguments */
 static bool parse_arguments(int argc, char* argv[], hyprun_options_t* options) {
-    static struct option long_options[] = {
-        {"interpret", no_argument, 0, 'i'},
-        {"bytecode", no_argument, 0, 'b'},
-        {"module-path", required_argument, 0, 'm'},
-        {"verbose", no_argument, 0, 'v'},
-        {"debug", no_argument, 0, 'd'},
-        {"help", no_argument, 0, 'h'},
-        {"version", no_argument, 0, 1000},
-        {0, 0, 0, 0}
-    };
-    
     /* Initialize options */
     memset(options, 0, sizeof(hyprun_options_t));
     
-    int c;
-    int option_index = 0;
-    
-    while ((c = getopt_long(argc, argv, "ibm:vdh", long_options, &option_index)) != -1) {
-        switch (c) {
-            case 'i':
-                options->interpret_mode = true;
-                break;
-            case 'b':
-                options->bytecode_mode = true;
-                break;
-            case 'm':
-                options->module_path = optarg;
-                break;
-            case 'v':
-                options->verbose = true;
-                break;
-            case 'd':
-                options->debug = true;
-                break;
-            case 'h':
-                options->show_help = true;
-                return true;
-            case 1000: /* --version */
-                options->show_version = true;
-                return true;
-            case '?':
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+            options->show_help = true;
+            return true;
+        } else if (strcmp(argv[i], "--version") == 0) {
+            options->show_version = true;
+            return true;
+        } else if (strcmp(argv[i], "-i") == 0 || strcmp(argv[i], "--interpret") == 0) {
+            options->interpret_mode = true;
+        } else if (strcmp(argv[i], "-b") == 0 || strcmp(argv[i], "--bytecode") == 0) {
+            options->bytecode_mode = true;
+        } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--verbose") == 0) {
+            options->verbose = true;
+        } else if (strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "--debug") == 0) {
+            options->debug = true;
+        } else if (strcmp(argv[i], "-m") == 0 || strcmp(argv[i], "--module-path") == 0) {
+            if (i + 1 < argc) {
+                options->module_path = argv[++i];
+            } else {
+                fprintf(stderr, "Error: -m/--module-path requires an argument\n");
                 return false;
-            default:
+            }
+        } else if (argv[i][0] == '-') {
+            fprintf(stderr, "Error: Unknown option %s\n", argv[i]);
+            return false;
+        } else {
+            /* Input file */
+            if (!options->input_file) {
+                options->input_file = argv[i];
+            } else {
+                fprintf(stderr, "Error: Multiple input files specified\n");
                 return false;
+            }
         }
     }
     
-    /* Get input file */
-    if (optind < argc) {
-        options->input_file = argv[optind];
-    } else if (!options->show_help && !options->show_version) {
+    /* Check if input file is required */
+    if (!options->input_file && !options->show_help && !options->show_version) {
         fprintf(stderr, "Error: No input file specified\n");
         return false;
     }
@@ -149,14 +138,27 @@ static int execute_source_code(hyprun_options_t* options) {
     }
     
     /* Read source file */
+    if (options->verbose) {
+        printf("Reading file: %s\n", options->input_file);
+    }
+    
     size_t source_size;
     char* source = hyp_read_file(options->input_file, &source_size);
     if (!source) {
-        fprintf(stderr, "Error: Could not read file '%s'\n", options->input_file);
+        fprintf(stderr, "Error: Could not read file %s\n", options->input_file);
         return 1;
     }
     
+    if (options->verbose) {
+        printf("File read successfully, length: %zu\n", source_size);
+        printf("First 100 characters: %.100s\n", source);
+    }
+    
     /* Create lexer */
+    if (options->verbose) {
+        printf("Creating lexer...\n");
+    }
+    
     hyp_lexer_t* lexer = hyp_lexer_create(source, options->input_file);
     if (!lexer) {
         fprintf(stderr, "Error: Could not create lexer\n");
@@ -164,7 +166,15 @@ static int execute_source_code(hyprun_options_t* options) {
         return 1;
     }
     
+    if (options->verbose) {
+        printf("Lexer created successfully\n");
+    }
+    
     /* Create parser */
+    if (options->verbose) {
+        printf("Creating parser...\n");
+    }
+    
     hyp_parser_t* parser = hyp_parser_create(lexer);
     if (!parser) {
         fprintf(stderr, "Error: Could not create parser\n");
@@ -173,9 +183,17 @@ static int execute_source_code(hyprun_options_t* options) {
         return 1;
     }
     
+    if (options->verbose) {
+        printf("Parser created successfully\n");
+    }
+    
     /* Parse source */
+    if (options->verbose) {
+        printf("Starting to parse source code...\n");
+    }
+    
     hyp_ast_node_t* ast = hyp_parser_parse(parser);
-    if (!ast || hyp_parser_had_error(parser)) {
+    if (!ast || parser->had_error) {
         fprintf(stderr, "Error: Parsing failed\n");
         hyp_parser_destroy(parser);
         hyp_lexer_destroy(lexer);
@@ -185,6 +203,10 @@ static int execute_source_code(hyprun_options_t* options) {
     
     if (options->verbose) {
         printf("Parsing completed successfully\n");
+        printf("AST root type: %d\n", ast->type);
+        if (ast->type == AST_PROGRAM) {
+            printf("Program has %zu statements\n", ast->program.statements.count);
+        }
     }
     
     /* Create runtime */

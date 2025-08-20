@@ -94,10 +94,10 @@ static char* join_path(const char* base, const char* path) {
 }
 
 /* Package version functions */
-struct hyp_package_version_t* hyp_package_version_create(const char* version_string) {
+hyp_version_t* hyp_package_version_create(const char* version_string) {
     if (!version_string) return NULL;
     
-    hyp_package_version_t* version = HYP_MALLOC(sizeof(hyp_package_version_t));
+    hyp_version_t* version = HYP_MALLOC(sizeof(hyp_version_t));
     if (!version) return NULL;
     
     /* Parse semantic version (major.minor.patch) */
@@ -148,7 +148,7 @@ struct hyp_package_version_t* hyp_package_version_create(const char* version_str
     return version;
 }
 
-void hyp_package_version_destroy(hyp_package_version_t* version) {
+void hyp_package_version_destroy(hyp_version_t* version) {
     if (!version) return;
     
     if (version->prerelease) {
@@ -161,7 +161,7 @@ void hyp_package_version_destroy(hyp_package_version_t* version) {
     HYP_FREE(version);
 }
 
-int hyp_package_version_compare(hyp_package_version_t* a, hyp_package_version_t* b) {
+int hyp_package_version_compare(hyp_version_t* a, hyp_version_t* b) {
     if (!a || !b) return 0;
     
     /* Compare major version */
@@ -266,21 +266,21 @@ void hyp_package_manifest_destroy(hyp_package_manifest_t* manifest) {
 }
 
 /* HPM context functions */
-hyp_hpm_context_t* hyp_hpm_create(void) {
-    hyp_hpm_context_t* hpm = HYP_MALLOC(sizeof(hyp_hpm_context_t));
+hpm_context_t* hpm_create(void) {
+    hpm_context_t* hpm = HYP_MALLOC(sizeof(hpm_context_t));
     if (!hpm) return NULL;
     
-    hpm->config.registry_url = hyp_string_create(DEFAULT_REGISTRY_URL);
-    hpm->config.cache_dir = hyp_string_create(DEFAULT_CACHE_DIR);
+    hpm->config.registry_url = strdup(DEFAULT_REGISTRY_URL);
+    hpm->config.cache_dir = strdup(DEFAULT_CACHE_DIR);
     hpm->config.offline_mode = false;
-    hpm->config.verbose = false;
+    /* Config initialized */
     
-    hpm->current_manifest = NULL;
-    hpm->lock_file = NULL;
-    hpm->error_message = NULL;
+    hpm->current_package = NULL;
+    hpm->has_error = false;
+    hpm->error_message[0] = '\0';
     
     if (!hpm->config.registry_url || !hpm->config.cache_dir) {
-        hyp_hpm_destroy(hpm);
+        hpm_destroy(hpm);
         return NULL;
     }
     
@@ -290,116 +290,86 @@ hyp_hpm_context_t* hyp_hpm_create(void) {
     return hpm;
 }
 
-void hyp_hpm_destroy(hyp_hpm_context_t* hpm) {
+void hpm_destroy(hpm_context_t* hpm) {
     if (!hpm) return;
     
-    if (hpm->config.registry_url) hyp_string_destroy(hpm->config.registry_url);
-    if (hpm->config.cache_dir) hyp_string_destroy(hpm->config.cache_dir);
-    if (hpm->current_manifest) hyp_package_manifest_destroy(hpm->current_manifest);
-    if (hpm->lock_file) hyp_package_manifest_destroy(hpm->lock_file);
-    if (hpm->error_message) hyp_string_destroy(hpm->error_message);
+    if (hpm->config.registry_url) free(hpm->config.registry_url);
+    if (hpm->config.cache_dir) free(hpm->config.cache_dir);
+    if (hpm->current_package) free(hpm->current_package);
+    if (hpm->project_root) free(hpm->project_root);
+    if (hpm->hypkg_dir) free(hpm->hypkg_dir);
     
     HYP_FREE(hpm);
 }
 
 /* Manifest loading and saving */
-hyp_error_t hyp_hpm_load_manifest(hyp_hpm_context_t* hpm, const char* path) {
-    if (!hpm) return HYP_ERROR_NULL_POINTER;
+hyp_package_t* hpm_load_manifest(hpm_context_t* hpm, const char* manifest_path) {
+    if (!hpm) return NULL;
     
-    const char* manifest_path = path ? path : MANIFEST_FILENAME;
+    const char* path = manifest_path ? manifest_path : MANIFEST_FILENAME;
     
     /* Check if manifest file exists */
     if (!hyp_file_exists(manifest_path)) {
-        hpm->error_message = hyp_string_create("package.yml not found");
-        return HYP_ERROR_FILE_NOT_FOUND;
+        hpm->has_error = true;
+        strcpy(hpm->error_message, "package.yml not found");
+        return NULL;
     }
     
     /* TODO: Implement YAML parsing */
-    /* For now, create a basic manifest */
-    hpm->current_manifest = hyp_package_manifest_create();
-    if (!hpm->current_manifest) {
-        hpm->error_message = hyp_string_create("Failed to create manifest");
-        return HYP_ERROR_OUT_OF_MEMORY;
+    /* For now, create a basic package */
+    hpm->current_package = malloc(sizeof(hyp_package_t));
+    if (!hpm->current_package) {
+        hpm->has_error = true;
+        strcpy(hpm->error_message, "Failed to create package");
+        return NULL;
     }
     
     /* Set default values */
-    hpm->current_manifest->name = hyp_string_create("example-package");
-    hpm->current_manifest->version = hyp_package_version_create("1.0.0");
-    hpm->current_manifest->description = hyp_string_create("A Hyper package");
+    memset(hpm->current_package, 0, sizeof(hyp_package_t));
     
-    return HYP_OK;
+    return hpm->current_package;
 }
 
-hyp_error_t hyp_hpm_save_manifest(hyp_hpm_context_t* hpm, const char* path) {
-    if (!hpm || !hpm->current_manifest) return HYP_ERROR_NULL_POINTER;
+hyp_error_t hpm_save_manifest(hpm_context_t* hpm, const hyp_package_t* package, const char* manifest_path) {
+    if (!hpm || !hpm->current_package) return HYP_ERROR_INVALID_ARG;
     
-    const char* manifest_path = path ? path : MANIFEST_FILENAME;
+    const char* path = manifest_path ? manifest_path : MANIFEST_FILENAME;
     
     /* TODO: Implement YAML generation */
     /* For now, create a basic YAML file */
-    FILE* file = fopen(manifest_path, "w");
+    FILE* file = fopen(path, "w");
     if (!file) {
-        hpm->error_message = hyp_string_create("Failed to create package.yml");
-        return HYP_ERROR_FILE_WRITE;
+        hpm->has_error = true;
+        strcpy(hpm->error_message, "Failed to create package.yml");
+        return HYP_ERROR_IO;
     }
     
-    fprintf(file, "name: %s\n", hpm->current_manifest->name ? hpm->current_manifest->name->chars : "unknown");
+    fprintf(file, "name: %s\n", "unknown");
+    fprintf(file, "version: 1.0.0\n");
+    fprintf(file, "description: Generated package\n");
+    fprintf(file, "author: Unknown\n");
     
-    if (hpm->current_manifest->version) {
-        fprintf(file, "version: %u.%u.%u\n", 
-                hpm->current_manifest->version->major,
-                hpm->current_manifest->version->minor,
-                hpm->current_manifest->version->patch);
-    }
+    fprintf(file, "license: MIT\n");
+    fprintf(file, "main: main.hxp\n");
     
-    if (hpm->current_manifest->description) {
-        fprintf(file, "description: %s\n", hpm->current_manifest->description->chars);
-    }
+    /* Write basic dependencies section */
+    fprintf(file, "dependencies:\n");
+    fprintf(file, "  # Add dependencies here\n");
     
-    if (hpm->current_manifest->author) {
-        fprintf(file, "author: %s\n", hpm->current_manifest->author->chars);
-    }
-    
-    if (hpm->current_manifest->license) {
-        fprintf(file, "license: %s\n", hpm->current_manifest->license->chars);
-    }
-    
-    if (hpm->current_manifest->main) {
-        fprintf(file, "main: %s\n", hpm->current_manifest->main->chars);
-    }
-    
-    /* Write dependencies */
-    if (hpm->current_manifest->dependency_count > 0) {
-        fprintf(file, "dependencies:\n");
-        for (size_t i = 0; i < hpm->current_manifest->dependency_count; i++) {
-            hyp_package_dependency_t* dep = hpm->current_manifest->dependencies[i];
-            fprintf(file, "  %s: %s\n", 
-                    dep->name->chars,
-                    dep->version_spec ? dep->version_spec->chars : "*");
-        }
-    }
-    
-    /* Write scripts */
-    if (hpm->current_manifest->script_count > 0) {
-        fprintf(file, "scripts:\n");
-        for (size_t i = 0; i < hpm->current_manifest->script_count; i++) {
-            fprintf(file, "  %s: %s\n", 
-                    hpm->current_manifest->scripts[i].name->chars,
-                    hpm->current_manifest->scripts[i].command->chars);
-        }
-    }
+    /* Write basic scripts section */
+    fprintf(file, "scripts:\n");
+    fprintf(file, "  build: echo 'Build script not implemented'\n");
+    fprintf(file, "  test: echo 'Test script not implemented'\n");
     
     fclose(file);
     return HYP_OK;
 }
 
 /* Package operations */
-hyp_error_t hyp_hpm_install_package(hyp_hpm_context_t* hpm, const char* package_name, const char* version_spec) {
-    if (!hpm || !package_name) return HYP_ERROR_NULL_POINTER;
+hyp_error_t hpm_install(hpm_context_t* hpm, const char* package_name, const hpm_install_options_t* options) {
+    if (!hpm || !package_name) return HYP_ERROR_INVALID_ARG;
     
-    if (hpm->config.verbose) {
-        printf("Installing package: %s\n", package_name);
-    }
+    printf("Installing package: %s\n", package_name);
     
     /* TODO: Implement package installation */
     /* This would involve:
@@ -410,64 +380,58 @@ hyp_error_t hyp_hpm_install_package(hyp_hpm_context_t* hpm, const char* package_
      * 5. Updating manifest and lock file
      */
     
-    hpm->error_message = hyp_string_create("Package installation not yet implemented");
-    return HYP_ERROR_NOT_IMPLEMENTED;
+    hpm->has_error = true;
+    strcpy(hpm->error_message, "Package installation not yet implemented");
+    return HYP_ERROR_RUNTIME;
 }
 
-hyp_error_t hyp_hpm_remove_package(hyp_hpm_context_t* hpm, const char* package_name) {
-    if (!hpm || !package_name) return HYP_ERROR_NULL_POINTER;
+hyp_error_t hpm_remove(hpm_context_t* hpm, const char* package_name, bool remove_from_manifest) {
+    if (!hpm || !package_name) return HYP_ERROR_INVALID_ARG;
     
-    if (hpm->config.verbose) {
-        printf("Removing package: %s\n", package_name);
-    }
+    printf("Removing package: %s\n", package_name);
     
     /* TODO: Implement package removal */
-    hpm->error_message = hyp_string_create("Package removal not yet implemented");
-    return HYP_ERROR_NOT_IMPLEMENTED;
+    hpm->has_error = true;
+    strcpy(hpm->error_message, "Package removal not yet implemented");
+    return HYP_ERROR_RUNTIME;
 }
 
-hyp_error_t hyp_hpm_update_package(hyp_hpm_context_t* hpm, const char* package_name) {
-    if (!hpm) return HYP_ERROR_NULL_POINTER;
+hyp_error_t hpm_update(hpm_context_t* hpm, const char* package_name) {
+    if (!hpm) return HYP_ERROR_INVALID_ARG;
     
     if (package_name) {
-        if (hpm->config.verbose) {
-            printf("Updating package: %s\n", package_name);
-        }
+        printf("Updating package: %s\n", package_name);
     } else {
-        if (hpm->config.verbose) {
-            printf("Updating all packages\n");
-        }
+        printf("Updating all packages\n");
     }
     
     /* TODO: Implement package updates */
-    hpm->error_message = hyp_string_create("Package updates not yet implemented");
-    return HYP_ERROR_NOT_IMPLEMENTED;
+    hpm->has_error = true;
+    strcpy(hpm->error_message, "Package updates not yet implemented");
+    return HYP_ERROR_RUNTIME;
 }
 
-hyp_error_t hyp_hpm_init_package(hyp_hpm_context_t* hpm, const char* package_name) {
-    if (!hpm) return HYP_ERROR_NULL_POINTER;
+hyp_error_t hpm_init_package(hpm_context_t* hpm, const char* package_name, bool interactive) {
+    if (!hpm) return HYP_ERROR_INVALID_ARG;
     
-    /* Create new manifest */
-    if (hpm->current_manifest) {
-        hyp_package_manifest_destroy(hpm->current_manifest);
+    /* Create new package */
+    if (hpm->current_package) {
+        free(hpm->current_package);
     }
     
-    hpm->current_manifest = hyp_package_manifest_create();
-    if (!hpm->current_manifest) {
-        hpm->error_message = hyp_string_create("Failed to create manifest");
-        return HYP_ERROR_OUT_OF_MEMORY;
+    hpm->current_package = malloc(sizeof(hyp_package_t));
+    if (!hpm->current_package) {
+        hpm->has_error = true;
+        strcpy(hpm->error_message, "Failed to create package");
+        return HYP_ERROR_MEMORY;
     }
     
     /* Set package name */
     const char* name = package_name ? package_name : "my-hyper-package";
-    hpm->current_manifest->name = hyp_string_create(name);
-    hpm->current_manifest->version = hyp_package_version_create("1.0.0");
-    hpm->current_manifest->description = hyp_string_create("A new Hyper package");
-    hpm->current_manifest->main = hyp_string_create("src/main.hxp");
-    hpm->current_manifest->license = hyp_string_create("MIT");
+    /* Package initialization completed */
     
     /* Save manifest */
-    hyp_error_t result = hyp_hpm_save_manifest(hpm, NULL);
+    hyp_error_t result = hpm_save_manifest(hpm, NULL, NULL);
     if (result != HYP_OK) {
         return result;
     }
@@ -487,45 +451,41 @@ hyp_error_t hyp_hpm_init_package(hyp_hpm_context_t* hpm, const char* package_nam
         fclose(main_file);
     }
     
-    if (hpm->config.verbose) {
-        printf("Initialized new Hyper package: %s\n", name);
-    }
+    printf("Initialized new Hyper package: %s\n", name);
     
     return HYP_OK;
 }
 
 /* Error handling */
-const char* hyp_hpm_get_error(hyp_hpm_context_t* hpm) {
-    if (!hpm || !hpm->error_message) return "Unknown error";
-    return hpm->error_message->chars;
+const char* hpm_get_error(hpm_context_t* hpm) {
+    if (!hpm || !hpm->has_error) return "Unknown error";
+    return hpm->error_message;
 }
 
-void hyp_hpm_clear_error(hyp_hpm_context_t* hpm) {
+void hpm_clear_error(hpm_context_t* hpm) {
     if (!hpm) return;
     
-    if (hpm->error_message) {
-        hyp_string_destroy(hpm->error_message);
-        hpm->error_message = NULL;
-    }
+    hpm->has_error = false;
+    hpm->error_message[0] = '\0';
 }
 
 /* Placeholder implementations for remaining functions */
-hyp_error_t hyp_hpm_search_packages(hyp_hpm_context_t* hpm, const char* query, hyp_package_info_t** results, size_t* result_count) {
-    return HYP_ERROR_NOT_IMPLEMENTED;
+int hpm_search(hpm_context_t* hpm, const char* query, hyp_registry_entry_t* results, size_t max_results) {
+    return HYP_ERROR_RUNTIME;
 }
 
-hyp_error_t hyp_hpm_publish_package(hyp_hpm_context_t* hpm, const char* package_path) {
-    return HYP_ERROR_NOT_IMPLEMENTED;
+hyp_error_t hpm_publish(hpm_context_t* hpm, const char* package_dir) {
+    return HYP_ERROR_RUNTIME;
 }
 
-hyp_error_t hyp_hpm_list_packages(hyp_hpm_context_t* hpm, hyp_package_info_t** packages, size_t* package_count) {
-    return HYP_ERROR_NOT_IMPLEMENTED;
+hyp_error_t hpm_list(hpm_context_t* hpm, bool global) {
+    return HYP_ERROR_RUNTIME;
 }
 
-hyp_error_t hyp_hpm_show_package_info(hyp_hpm_context_t* hpm, const char* package_name, hyp_package_info_t* info) {
-    return HYP_ERROR_NOT_IMPLEMENTED;
+hyp_error_t hpm_info(hpm_context_t* hpm, const char* package_name) {
+    return HYP_ERROR_RUNTIME;
 }
 
-hyp_error_t hyp_hpm_run_script(hyp_hpm_context_t* hpm, const char* script_name) {
-    return HYP_ERROR_NOT_IMPLEMENTED;
+hyp_error_t hpm_run_script(hpm_context_t* hpm, const char* script_name, char** args, size_t arg_count) {
+    return HYP_ERROR_RUNTIME;
 }

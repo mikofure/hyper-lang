@@ -41,6 +41,8 @@ set(COMPILER_SOURCES
 set(RUNTIME_SOURCES
     src/hyprun/main.c
     src/runtime/hyp_runtime.c
+    src/lexer/lexer.c
+    src/parser/parser.c
 )
 
 set(HPM_SOURCES

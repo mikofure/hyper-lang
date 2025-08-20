@@ -8,29 +8,34 @@
 #include "../../include/transpiler.h"
 #include "../../include/parser.h"
 #include "../../include/hyp_common.h"
+#include "../../include/hyp_runtime.h"
 #include <string.h>
 #include <stdarg.h>
 
+/* Forward declaration */
+void hyp_codegen_generate_node(hyp_codegen_t* codegen, hyp_ast_node_t* node);
+
 /* Symbol table implementation */
-static hyp_symbol_t* symbol_table_lookup(hyp_codegen_t* codegen, const char* name) {
-    for (size_t i = 0; i < codegen->symbol_table.count; i++) {
-        hyp_symbol_t* symbol = codegen->symbol_table.data[i];
-        if (strcmp(symbol->name, name) == 0) {
-            return symbol;
+static const char* symbol_table_lookup(hyp_codegen_t* codegen, const char* name) {
+    for (size_t i = 0; i < codegen->symbols.count; i++) {
+        if (strcmp(codegen->symbols.names[i], name) == 0) {
+            return codegen->symbols.names[i];
         }
     }
     return NULL;
 }
 
-static void symbol_table_add(hyp_codegen_t* codegen, const char* name, hyp_symbol_type_t type) {
-    hyp_symbol_t* symbol = hyp_arena_alloc(codegen->arena, sizeof(hyp_symbol_t));
-    if (!symbol) return;
+static void symbol_table_add(hyp_codegen_t* codegen, const char* name, hyp_type_t* type) {
+    if (codegen->symbols.count >= codegen->symbols.capacity) {
+        size_t new_capacity = codegen->symbols.capacity ? codegen->symbols.capacity * 2 : 8;
+        codegen->symbols.names = realloc(codegen->symbols.names, new_capacity * sizeof(char*));
+        codegen->symbols.types = realloc(codegen->symbols.types, new_capacity * sizeof(hyp_type_t*));
+        codegen->symbols.capacity = new_capacity;
+    }
     
-    symbol->name = name;
-    symbol->type = type;
-    symbol->scope_depth = codegen->scope_depth;
-    
-    HYP_ARRAY_PUSH(codegen->symbol_table, symbol);
+    codegen->symbols.names[codegen->symbols.count] = (char*)name;
+    codegen->symbols.types[codegen->symbols.count] = type;
+    codegen->symbols.count++;
 }
 
 /* Code emission helpers */
@@ -75,105 +80,108 @@ static void emit_dedent(hyp_codegen_t* codegen) {
 }
 
 /* C code generation */
-static void generate_c_literal(hyp_codegen_t* codegen, hyp_literal_t* literal) {
-    switch (literal->type) {
-        case HYP_LITERAL_NULL:
-            emit(codegen, "NULL");
-            break;
-        case HYP_LITERAL_BOOLEAN:
-            emit(codegen, literal->as.boolean ? "true" : "false");
-            break;
-        case HYP_LITERAL_NUMBER:
-            emit(codegen, "%.17g", literal->as.number);
-            break;
-        case HYP_LITERAL_STRING:
-            emit(codegen, "\"%s\"", literal->as.string ? literal->as.string : "");
-            break;
-    }
+static void generate_c_number(hyp_codegen_t* codegen, hyp_ast_node_t* node) {
+    emit(codegen, "%.17g", node->number.value);
 }
 
-static void generate_c_binary(hyp_codegen_t* codegen, hyp_binary_t* binary) {
+static void generate_c_string(hyp_codegen_t* codegen, hyp_ast_node_t* node) {
+    emit(codegen, "\"%s\"", node->string.value ? node->string.value : "");
+}
+
+static void generate_c_boolean(hyp_codegen_t* codegen, hyp_ast_node_t* node) {
+    emit(codegen, node->boolean.value ? "true" : "false");
+}
+
+static void generate_c_identifier(hyp_codegen_t* codegen, hyp_ast_node_t* node) {
+    emit(codegen, "%s", node->identifier.name ? node->identifier.name : "unknown");
+}
+
+static void generate_c_binary(hyp_codegen_t* codegen, hyp_ast_node_t* node) {
     emit(codegen, "(");
-    hyp_codegen_generate_node(codegen, binary->left);
+    hyp_codegen_generate_node(codegen, node->binary_op.left);
     
-    switch (binary->operator) {
-        case HYP_BINARY_ADD: emit(codegen, " + "); break;
-        case HYP_BINARY_SUBTRACT: emit(codegen, " - "); break;
-        case HYP_BINARY_MULTIPLY: emit(codegen, " * "); break;
-        case HYP_BINARY_DIVIDE: emit(codegen, " / "); break;
-        case HYP_BINARY_MODULO: emit(codegen, " %% "); break;
-        case HYP_BINARY_EQUAL: emit(codegen, " == "); break;
-        case HYP_BINARY_NOT_EQUAL: emit(codegen, " != "); break;
-        case HYP_BINARY_LESS: emit(codegen, " < "); break;
-        case HYP_BINARY_LESS_EQUAL: emit(codegen, " <= "); break;
-        case HYP_BINARY_GREATER: emit(codegen, " > "); break;
-        case HYP_BINARY_GREATER_EQUAL: emit(codegen, " >= "); break;
-        case HYP_BINARY_AND: emit(codegen, " && "); break;
-        case HYP_BINARY_OR: emit(codegen, " || "); break;
+    switch (node->binary_op.op) {
+        case BINOP_ADD: emit(codegen, " + "); break;
+        case BINOP_SUB: emit(codegen, " - "); break;
+        case BINOP_MUL: emit(codegen, " * "); break;
+        case BINOP_DIV: emit(codegen, " / "); break;
+        case BINOP_MOD: emit(codegen, " %% "); break;
+        case BINOP_EQ: emit(codegen, " == "); break;
+        case BINOP_NE: emit(codegen, " != "); break;
+        case BINOP_LT: emit(codegen, " < "); break;
+        case BINOP_LE: emit(codegen, " <= "); break;
+        case BINOP_GT: emit(codegen, " > "); break;
+        case BINOP_GE: emit(codegen, " >= "); break;
+        case BINOP_AND: emit(codegen, " && "); break;
+        case BINOP_OR: emit(codegen, " || "); break;
+        default: emit(codegen, " ? "); break;
     }
     
-    hyp_codegen_generate_node(codegen, binary->right);
+    hyp_codegen_generate_node(codegen, node->binary_op.right);
     emit(codegen, ")");
 }
 
-static void generate_c_unary(hyp_codegen_t* codegen, hyp_unary_t* unary) {
-    switch (unary->operator) {
-        case HYP_UNARY_NOT:
+static void generate_c_unary(hyp_codegen_t* codegen, hyp_ast_node_t* node) {
+    switch (node->unary_op.op) {
+        case UNOP_NOT:
             emit(codegen, "!");
             break;
-        case HYP_UNARY_NEGATE:
+        case UNOP_MINUS:
             emit(codegen, "-");
+            break;
+        case UNOP_PLUS:
+            emit(codegen, "+");
+            break;
+        default:
             break;
     }
     
     emit(codegen, "(");
-    hyp_codegen_generate_node(codegen, unary->operand);
+    hyp_codegen_generate_node(codegen, node->unary_op.operand);
     emit(codegen, ")");
 }
 
-static void generate_c_identifier(hyp_codegen_t* codegen, hyp_identifier_t* identifier) {
-    emit(codegen, "%s", identifier->name ? identifier->name : "unknown");
-}
 
-static void generate_c_call(hyp_codegen_t* codegen, hyp_call_t* call) {
-    hyp_codegen_generate_node(codegen, call->callee);
+
+static void generate_c_call(hyp_codegen_t* codegen, hyp_ast_node_t* node) {
+    hyp_codegen_generate_node(codegen, node->call.callee);
     emit(codegen, "(");
     
-    for (size_t i = 0; i < call->arguments.count; i++) {
+    for (size_t i = 0; i < node->call.arguments.count; i++) {
         if (i > 0) emit(codegen, ", ");
-        hyp_codegen_generate_node(codegen, call->arguments.data[i]);
+        hyp_codegen_generate_node(codegen, node->call.arguments.data[i]);
     }
     
     emit(codegen, ")");
 }
 
-static void generate_c_assignment(hyp_codegen_t* codegen, hyp_assignment_t* assignment) {
-    hyp_codegen_generate_node(codegen, assignment->target);
+static void generate_c_assignment(hyp_codegen_t* codegen, hyp_ast_node_t* node) {
+    hyp_codegen_generate_node(codegen, node->assignment.target);
     
-    switch (assignment->operator) {
-        case HYP_ASSIGN_SIMPLE: emit(codegen, " = "); break;
-        case HYP_ASSIGN_ADD: emit(codegen, " += "); break;
-        case HYP_ASSIGN_SUBTRACT: emit(codegen, " -= "); break;
-        case HYP_ASSIGN_MULTIPLY: emit(codegen, " *= "); break;
-        case HYP_ASSIGN_DIVIDE: emit(codegen, " /= "); break;
+    switch (node->assignment.op) {
+        case ASSIGN_SIMPLE: emit(codegen, " = "); break;
+        case ASSIGN_ADD: emit(codegen, " += "); break;
+        case ASSIGN_SUB: emit(codegen, " -= "); break;
+        case ASSIGN_MUL: emit(codegen, " *= "); break;
+        case ASSIGN_DIV: emit(codegen, " /= "); break;
     }
     
-    hyp_codegen_generate_node(codegen, assignment->value);
+    hyp_codegen_generate_node(codegen, node->assignment.value);
 }
 
-static void generate_c_var_decl(hyp_codegen_t* codegen, hyp_var_decl_t* var_decl) {
+static void generate_c_var_decl(hyp_codegen_t* codegen, hyp_ast_node_t* node) {
     /* Add to symbol table */
-    symbol_table_add(codegen, var_decl->name, HYP_SYMBOL_VARIABLE);
+    symbol_table_add(codegen, node->variable_decl.name, NULL);
     
-    if (var_decl->is_const) {
-        emit_line(codegen, "const hyp_value_t %s", var_decl->name);
+    if (node->variable_decl.is_const) {
+        emit_line(codegen, "const hyp_value_t %s", node->variable_decl.name);
     } else {
-        emit_line(codegen, "hyp_value_t %s", var_decl->name);
+        emit_line(codegen, "hyp_value_t %s", node->variable_decl.name);
     }
     
-    if (var_decl->initializer) {
+    if (node->variable_decl.initializer) {
         emit(codegen, " = ");
-        hyp_codegen_generate_node(codegen, var_decl->initializer);
+        hyp_codegen_generate_node(codegen, node->variable_decl.initializer);
     } else {
         emit(codegen, " = hyp_value_null()");
     }
@@ -181,16 +189,16 @@ static void generate_c_var_decl(hyp_codegen_t* codegen, hyp_var_decl_t* var_decl
     emit(codegen, ";");
 }
 
-static void generate_c_function(hyp_codegen_t* codegen, hyp_function_t* function) {
+static void generate_c_function(hyp_codegen_t* codegen, hyp_ast_node_t* node) {
     /* Add to symbol table */
-    symbol_table_add(codegen, function->name, HYP_SYMBOL_FUNCTION);
+    symbol_table_add(codegen, node->function_decl.name, NULL);
     
-    emit_line(codegen, "hyp_value_t %s(", function->name);
+    emit_line(codegen, "hyp_value_t %s(", node->function_decl.name);
     
     /* Parameters */
-    for (size_t i = 0; i < function->parameters.count; i++) {
+    for (size_t i = 0; i < node->function_decl.parameters.count; i++) {
         if (i > 0) emit(codegen, ", ");
-        hyp_parameter_t* param = function->parameters.data[i];
+        hyp_parameter_t* param = &node->function_decl.parameters.data[i];
         emit(codegen, "hyp_value_t %s", param->name);
     }
     
@@ -198,50 +206,50 @@ static void generate_c_function(hyp_codegen_t* codegen, hyp_function_t* function
     emit_indent(codegen);
     
     /* Function body */
-    codegen->scope_depth++;
-    hyp_codegen_generate_node(codegen, function->body);
-    codegen->scope_depth--;
+    codegen->function_ctx.loop_depth++;
+    hyp_codegen_generate_node(codegen, node->function_decl.body);
+    codegen->function_ctx.loop_depth--;
     
     emit_dedent(codegen);
     emit_line(codegen, "}");
 }
 
-static void generate_c_if(hyp_codegen_t* codegen, hyp_if_t* if_stmt) {
+static void generate_c_if(hyp_codegen_t* codegen, hyp_ast_node_t* node) {
     emit_line(codegen, "if (hyp_value_is_truthy(");
-    hyp_codegen_generate_node(codegen, if_stmt->condition);
+    hyp_codegen_generate_node(codegen, node->if_stmt.condition);
     emit(codegen, ")) {");
     
     emit_indent(codegen);
-    hyp_codegen_generate_node(codegen, if_stmt->then_branch);
+    hyp_codegen_generate_node(codegen, node->if_stmt.then_stmt);
     emit_dedent(codegen);
     
-    if (if_stmt->else_branch) {
+    if (node->if_stmt.else_stmt) {
         emit_line(codegen, "} else {");
         emit_indent(codegen);
-        hyp_codegen_generate_node(codegen, if_stmt->else_branch);
+        hyp_codegen_generate_node(codegen, node->if_stmt.else_stmt);
         emit_dedent(codegen);
     }
     
     emit_line(codegen, "}");
 }
 
-static void generate_c_while(hyp_codegen_t* codegen, hyp_while_t* while_stmt) {
+static void generate_c_while(hyp_codegen_t* codegen, hyp_ast_node_t* node) {
     emit_line(codegen, "while (hyp_value_is_truthy(");
-    hyp_codegen_generate_node(codegen, while_stmt->condition);
+    hyp_codegen_generate_node(codegen, node->while_stmt.condition);
     emit(codegen, ")) {");
     
     emit_indent(codegen);
-    hyp_codegen_generate_node(codegen, while_stmt->body);
+    hyp_codegen_generate_node(codegen, node->while_stmt.body);
     emit_dedent(codegen);
     
     emit_line(codegen, "}");
 }
 
-static void generate_c_return(hyp_codegen_t* codegen, hyp_return_t* return_stmt) {
+static void generate_c_return(hyp_codegen_t* codegen, hyp_ast_node_t* node) {
     emit_line(codegen, "return ");
     
-    if (return_stmt->value) {
-        hyp_codegen_generate_node(codegen, return_stmt->value);
+    if (node->return_stmt.value) {
+        hyp_codegen_generate_node(codegen, node->return_stmt.value);
     } else {
         emit(codegen, "hyp_value_null()");
     }
@@ -249,23 +257,23 @@ static void generate_c_return(hyp_codegen_t* codegen, hyp_return_t* return_stmt)
     emit(codegen, ";");
 }
 
-static void generate_c_block(hyp_codegen_t* codegen, hyp_block_t* block) {
-    codegen->scope_depth++;
+static void generate_c_block(hyp_codegen_t* codegen, hyp_ast_node_t* node) {
+    codegen->function_ctx.loop_depth++;
     
-    for (size_t i = 0; i < block->statements.count; i++) {
-        hyp_codegen_generate_node(codegen, block->statements.data[i]);
+    for (size_t i = 0; i < node->block_stmt.statements.count; i++) {
+        hyp_codegen_generate_node(codegen, node->block_stmt.statements.data[i]);
     }
     
-    codegen->scope_depth--;
+    codegen->function_ctx.loop_depth--;
 }
 
-static void generate_c_expression_stmt(hyp_codegen_t* codegen, hyp_expression_stmt_t* expr_stmt) {
+static void generate_c_expression_stmt(hyp_codegen_t* codegen, hyp_ast_node_t* node) {
     emit_line(codegen, "");
-    hyp_codegen_generate_node(codegen, expr_stmt->expression);
+    hyp_codegen_generate_node(codegen, node->expression_stmt.expression);
     emit(codegen, ";");
 }
 
-static void generate_c_program(hyp_codegen_t* codegen, hyp_program_t* program) {
+static void generate_c_program(hyp_codegen_t* codegen, hyp_ast_node_t* node) {
     /* Generate includes */
     emit_line(codegen, "#include <stdio.h>");
     emit_line(codegen, "#include <stdlib.h>");
@@ -274,9 +282,9 @@ static void generate_c_program(hyp_codegen_t* codegen, hyp_program_t* program) {
     emit_line(codegen, "#include \"hyp_runtime.h\"");
     emit_line(codegen, "");
     
-    /* Generate declarations */
-    for (size_t i = 0; i < program->declarations.count; i++) {
-        hyp_codegen_generate_node(codegen, program->declarations.data[i]);
+    /* Generate statements */
+    for (size_t i = 0; i < node->program.statements.count; i++) {
+        hyp_codegen_generate_node(codegen, node->program.statements.data[i]);
         emit_line(codegen, "");
     }
     
@@ -297,54 +305,54 @@ static void generate_c_program(hyp_codegen_t* codegen, hyp_program_t* program) {
 }
 
 /* JavaScript code generation */
-static void generate_js_literal(hyp_codegen_t* codegen, hyp_literal_t* literal) {
-    switch (literal->type) {
-        case HYP_LITERAL_NULL:
-            emit(codegen, "null");
-            break;
-        case HYP_LITERAL_BOOLEAN:
-            emit(codegen, literal->as.boolean ? "true" : "false");
-            break;
-        case HYP_LITERAL_NUMBER:
-            emit(codegen, "%.17g", literal->as.number);
-            break;
-        case HYP_LITERAL_STRING:
-            emit(codegen, "\"%s\"", literal->as.string ? literal->as.string : "");
-            break;
-    }
+static void generate_js_number(hyp_codegen_t* codegen, hyp_ast_node_t* node) {
+    emit(codegen, "%.17g", node->number.value);
 }
 
-static void generate_js_binary(hyp_codegen_t* codegen, hyp_binary_t* binary) {
+static void generate_js_string(hyp_codegen_t* codegen, hyp_ast_node_t* node) {
+    emit(codegen, "\"%s\"", node->string.value ? node->string.value : "");
+}
+
+static void generate_js_boolean(hyp_codegen_t* codegen, hyp_ast_node_t* node) {
+    emit(codegen, node->boolean.value ? "true" : "false");
+}
+
+static void generate_js_identifier(hyp_codegen_t* codegen, hyp_ast_node_t* node) {
+    emit(codegen, "%s", node->identifier.name ? node->identifier.name : "unknown");
+}
+
+static void generate_js_binary(hyp_codegen_t* codegen, hyp_ast_node_t* node) {
     emit(codegen, "(");
-    hyp_codegen_generate_node(codegen, binary->left);
+    hyp_codegen_generate_node(codegen, node->binary_op.left);
     
-    switch (binary->operator) {
-        case HYP_BINARY_ADD: emit(codegen, " + "); break;
-        case HYP_BINARY_SUBTRACT: emit(codegen, " - "); break;
-        case HYP_BINARY_MULTIPLY: emit(codegen, " * "); break;
-        case HYP_BINARY_DIVIDE: emit(codegen, " / "); break;
-        case HYP_BINARY_MODULO: emit(codegen, " %% "); break;
-        case HYP_BINARY_EQUAL: emit(codegen, " === "); break;
-        case HYP_BINARY_NOT_EQUAL: emit(codegen, " !== "); break;
-        case HYP_BINARY_LESS: emit(codegen, " < "); break;
-        case HYP_BINARY_LESS_EQUAL: emit(codegen, " <= "); break;
-        case HYP_BINARY_GREATER: emit(codegen, " > "); break;
-        case HYP_BINARY_GREATER_EQUAL: emit(codegen, " >= "); break;
-        case HYP_BINARY_AND: emit(codegen, " && "); break;
-        case HYP_BINARY_OR: emit(codegen, " || "); break;
+    switch (node->binary_op.op) {
+        case BINOP_ADD: emit(codegen, " + "); break;
+        case BINOP_SUB: emit(codegen, " - "); break;
+        case BINOP_MUL: emit(codegen, " * "); break;
+        case BINOP_DIV: emit(codegen, " / "); break;
+        case BINOP_MOD: emit(codegen, " % "); break;
+        case BINOP_EQ: emit(codegen, " === "); break;
+        case BINOP_NE: emit(codegen, " !== "); break;
+        case BINOP_LT: emit(codegen, " < "); break;
+        case BINOP_LE: emit(codegen, " <= "); break;
+        case BINOP_GT: emit(codegen, " > "); break;
+        case BINOP_GE: emit(codegen, " >= "); break;
+        case BINOP_AND: emit(codegen, " && "); break;
+        case BINOP_OR: emit(codegen, " || "); break;
+        default: emit(codegen, " ? "); break;
     }
     
-    hyp_codegen_generate_node(codegen, binary->right);
+    hyp_codegen_generate_node(codegen, node->binary_op.right);
     emit(codegen, ")");
 }
 
-static void generate_js_function(hyp_codegen_t* codegen, hyp_function_t* function) {
-    emit_line(codegen, "function %s(", function->name);
+static void generate_js_function(hyp_codegen_t* codegen, hyp_ast_node_t* node) {
+    emit_line(codegen, "function %s(", node->function_decl.name);
     
     /* Parameters */
-    for (size_t i = 0; i < function->parameters.count; i++) {
+    for (size_t i = 0; i < node->function_decl.parameters.count; i++) {
         if (i > 0) emit(codegen, ", ");
-        hyp_parameter_t* param = function->parameters.data[i];
+        hyp_parameter_t* param = &node->function_decl.parameters.data[i];
         emit(codegen, "%s", param->name);
     }
     
@@ -352,7 +360,7 @@ static void generate_js_function(hyp_codegen_t* codegen, hyp_function_t* functio
     emit_indent(codegen);
     
     /* Function body */
-    hyp_codegen_generate_node(codegen, function->body);
+    hyp_codegen_generate_node(codegen, node->function_decl.body);
     
     emit_dedent(codegen);
     emit_line(codegen, "}");
@@ -363,68 +371,69 @@ void hyp_codegen_generate_node(hyp_codegen_t* codegen, hyp_ast_node_t* node) {
     if (!codegen || !node) return;
     
     switch (codegen->target) {
-        case HYP_TARGET_C:
+        case TARGET_C:
             switch (node->type) {
-                case HYP_AST_LITERAL:
-                    generate_c_literal(codegen, &node->as.literal);
+                case AST_NUMBER:
+                    emit(codegen, "%.17g", node->number.value);
                     break;
-                case HYP_AST_BINARY:
-                    generate_c_binary(codegen, &node->as.binary);
+                case AST_BINARY_OP:
+                    hyp_codegen_generate_node(codegen, node->binary_op.left);
+                    emit(codegen, " %s ", hyp_binary_op_to_c(node->binary_op.op));
+                    hyp_codegen_generate_node(codegen, node->binary_op.right);
                     break;
-                case HYP_AST_UNARY:
-                    generate_c_unary(codegen, &node->as.unary);
+                case AST_UNARY_OP:
+                    emit(codegen, "%s", hyp_unary_op_to_c(node->unary_op.op));
+                    hyp_codegen_generate_node(codegen, node->unary_op.operand);
                     break;
-                case HYP_AST_IDENTIFIER:
-                    generate_c_identifier(codegen, &node->as.identifier);
+                case AST_IDENTIFIER:
+                    emit(codegen, "%s", node->identifier.name);
                     break;
-                case HYP_AST_CALL:
-                    generate_c_call(codegen, &node->as.call);
+                case AST_STRING:
+                    emit(codegen, "\"%s\"", node->string.value);
                     break;
-                case HYP_AST_ASSIGNMENT:
-                    generate_c_assignment(codegen, &node->as.assignment);
+                case AST_BOOLEAN:
+                    emit(codegen, "%s", node->boolean.value ? "true" : "false");
                     break;
-                case HYP_AST_VAR_DECL:
-                    generate_c_var_decl(codegen, &node->as.var_decl);
-                    break;
-                case HYP_AST_FUNCTION:
-                    generate_c_function(codegen, &node->as.function);
-                    break;
-                case HYP_AST_IF:
-                    generate_c_if(codegen, &node->as.if_stmt);
-                    break;
-                case HYP_AST_WHILE:
-                    generate_c_while(codegen, &node->as.while_stmt);
-                    break;
-                case HYP_AST_RETURN:
-                    generate_c_return(codegen, &node->as.return_stmt);
-                    break;
-                case HYP_AST_BLOCK:
-                    generate_c_block(codegen, &node->as.block);
-                    break;
-                case HYP_AST_EXPRESSION_STMT:
-                    generate_c_expression_stmt(codegen, &node->as.expression_stmt);
-                    break;
-                case HYP_AST_PROGRAM:
-                    generate_c_program(codegen, &node->as.program);
+                case AST_CALL:
+                case AST_ASSIGNMENT:
+                case AST_VARIABLE_DECL:
+                case AST_FUNCTION_DECL:
+                case AST_IF_STMT:
+                case AST_WHILE_STMT:
+                case AST_RETURN_STMT:
+                case AST_BLOCK_STMT:
+                case AST_EXPRESSION_STMT:
+                case AST_PROGRAM:
+                    /* TODO: Implement these cases */
+                    emit(codegen, "/* TODO: %s */", hyp_ast_node_type_name(node->type));
                     break;
                 default:
                     break;
             }
             break;
             
-        case HYP_TARGET_JAVASCRIPT:
+        case TARGET_JAVASCRIPT:
             switch (node->type) {
-                case HYP_AST_LITERAL:
-                    generate_js_literal(codegen, &node->as.literal);
+                case AST_NUMBER:
+                    emit(codegen, "%.17g", node->number.value);
                     break;
-                case HYP_AST_BINARY:
-                    generate_js_binary(codegen, &node->as.binary);
+                case AST_BINARY_OP:
+                    hyp_codegen_generate_node(codegen, node->binary_op.left);
+                    emit(codegen, " %s ", hyp_binary_op_to_js(node->binary_op.op));
+                    hyp_codegen_generate_node(codegen, node->binary_op.right);
                     break;
-                case HYP_AST_FUNCTION:
-                    generate_js_function(codegen, &node->as.function);
+                case AST_IDENTIFIER:
+                    emit(codegen, "%s", node->identifier.name);
+                    break;
+                case AST_STRING:
+                    emit(codegen, "\"%s\"", node->string.value);
+                    break;
+                case AST_BOOLEAN:
+                    emit(codegen, "%s", node->boolean.value ? "true" : "false");
                     break;
                 /* Add more JavaScript cases as needed */
                 default:
+                    emit(codegen, "/* TODO: %s */", hyp_ast_node_type_name(node->type));
                     break;
             }
             break;
@@ -440,12 +449,24 @@ hyp_codegen_t* hyp_codegen_create(hyp_target_t target, hyp_codegen_options_t* op
     if (!codegen) return NULL;
     
     codegen->target = target;
-    codegen->options = options ? *options : (hyp_codegen_options_t){0};
+    if (options) {
+        codegen->optimize = options->optimize;
+        codegen->debug_info = options->debug_info;
+    } else {
+        codegen->optimize = false;
+        codegen->debug_info = false;
+    }
     codegen->output = hyp_string_create("");
     codegen->indent_level = 0;
-    codegen->scope_depth = 0;
+    codegen->function_ctx.loop_depth = 0;
+    codegen->function_ctx.current_function = NULL;
+    codegen->function_ctx.return_type = NULL;
+    codegen->function_ctx.in_loop = false;
     
-    HYP_ARRAY_INIT(codegen->symbol_table);
+    codegen->symbols.names = NULL;
+    codegen->symbols.types = NULL;
+    codegen->symbols.count = 0;
+    codegen->symbols.capacity = 0;
     
     codegen->arena = hyp_arena_create(8192);
     if (!codegen->arena) {
@@ -470,16 +491,16 @@ void hyp_codegen_destroy(hyp_codegen_t* codegen) {
 }
 
 hyp_error_t hyp_codegen_generate(hyp_codegen_t* codegen, hyp_ast_node_t* ast) {
-    if (!codegen || !ast) return HYP_ERROR_INVALID_ARGUMENT;
+    if (!codegen || !ast) return HYP_ERROR_INVALID_ARG;
     
     /* Reset output */
     hyp_string_destroy(&codegen->output);
     codegen->output = hyp_string_create("");
     codegen->indent_level = 0;
-    codegen->scope_depth = 0;
+    codegen->function_ctx.loop_depth = 0;
     
     /* Clear symbol table */
-    codegen->symbol_table.count = 0;
+    codegen->symbols.count = 0;
     
     /* Generate code */
     hyp_codegen_generate_node(codegen, ast);
@@ -498,17 +519,132 @@ size_t hyp_codegen_get_output_length(hyp_codegen_t* codegen) {
 /* Utility functions */
 const char* hyp_target_name(hyp_target_t target) {
     switch (target) {
-        case HYP_TARGET_C: return "C";
-        case HYP_TARGET_JAVASCRIPT: return "JavaScript";
-        case HYP_TARGET_BYTECODE: return "Bytecode";
-        case HYP_TARGET_ASSEMBLY: return "Assembly";
-        case HYP_TARGET_LLVM_IR: return "LLVM IR";
+        case TARGET_C: return "C";
+        case TARGET_JAVASCRIPT: return "JavaScript";
+        case TARGET_BYTECODE: return "Bytecode";
+        case TARGET_ASSEMBLY: return "Assembly";
+        case TARGET_LLVM_IR: return "LLVM IR";
         default: return "Unknown";
     }
 }
 
 hyp_error_t hyp_codegen_write_to_file(hyp_codegen_t* codegen, const char* filename) {
-    if (!codegen || !filename) return HYP_ERROR_INVALID_ARGUMENT;
+    if (!codegen || !filename) return HYP_ERROR_INVALID_ARG;
     
     return hyp_write_file(filename, codegen->output.data, codegen->output.length);
+}
+
+/* Initialize code generator */
+hyp_error_t hyp_codegen_init(hyp_codegen_t* codegen, hyp_target_t target) {
+    if (!codegen) return HYP_ERROR_INVALID_ARG;
+    
+    memset(codegen, 0, sizeof(hyp_codegen_t));
+    codegen->target = target;
+    codegen->indent_level = 0;
+    codegen->symbols.capacity = 0;
+    codegen->symbols.count = 0;
+    codegen->symbols.names = NULL;
+    codegen->symbols.types = NULL;
+    
+    codegen->output = hyp_string_create("");
+    
+    return HYP_OK;
+}
+
+/* Get AST node type name */
+const char* hyp_ast_node_type_name(hyp_ast_node_type_t type) {
+    switch (type) {
+        case AST_NUMBER: return "Number";
+        case AST_STRING: return "String";
+        case AST_BOOLEAN: return "Boolean";
+        case AST_NULL: return "Null";
+        case AST_IDENTIFIER: return "Identifier";
+        case AST_BINARY_OP: return "BinaryOp";
+        case AST_UNARY_OP: return "UnaryOp";
+        case AST_ASSIGNMENT: return "Assignment";
+        case AST_CALL: return "Call";
+        case AST_MEMBER_ACCESS: return "MemberAccess";
+        case AST_INDEX_ACCESS: return "IndexAccess";
+        case AST_CONDITIONAL: return "Conditional";
+        case AST_ARRAY_LITERAL: return "ArrayLiteral";
+        case AST_OBJECT_LITERAL: return "ObjectLiteral";
+        case AST_LAMBDA: return "Lambda";
+        case AST_EXPRESSION_STMT: return "ExpressionStmt";
+        case AST_VARIABLE_DECL: return "VariableDecl";
+        case AST_FUNCTION_DECL: return "FunctionDecl";
+        case AST_IF_STMT: return "IfStmt";
+        case AST_WHILE_STMT: return "WhileStmt";
+        case AST_FOR_STMT: return "ForStmt";
+        case AST_RETURN_STMT: return "ReturnStmt";
+        case AST_BLOCK_STMT: return "BlockStmt";
+        case AST_IMPORT_STMT: return "ImportStmt";
+        case AST_EXPORT_STMT: return "ExportStmt";
+        case AST_MATCH_STMT: return "MatchStmt";
+        case AST_TRY_STMT: return "TryStmt";
+        case AST_PROGRAM: return "Program";
+        default: return "Unknown";
+    }
+}
+
+/* Convert binary operator to C */
+const char* hyp_binary_op_to_c(hyp_binary_op_t op) {
+    switch (op) {
+        case BINOP_ADD: return "+";
+        case BINOP_SUB: return "-";
+        case BINOP_MUL: return "*";
+        case BINOP_DIV: return "/";
+        case BINOP_MOD: return "%";
+        case BINOP_EQ: return "==";
+        case BINOP_NE: return "!=";
+        case BINOP_LT: return "<";
+        case BINOP_LE: return "<=";
+        case BINOP_GT: return ">";
+        case BINOP_GE: return ">=";
+        case BINOP_AND: return "&&";
+        case BINOP_OR: return "||";
+        case BINOP_BITWISE_AND: return "&";
+        case BINOP_BITWISE_OR: return "|";
+        case BINOP_BITWISE_XOR: return "^";
+        case BINOP_LEFT_SHIFT: return "<<";
+        case BINOP_RIGHT_SHIFT: return ">>";
+        default: return "?";
+    }
+}
+
+/* Convert binary operator to JavaScript */
+const char* hyp_binary_op_to_js(hyp_binary_op_t op) {
+    switch (op) {
+        case BINOP_ADD: return "+";
+        case BINOP_SUB: return "-";
+        case BINOP_MUL: return "*";
+        case BINOP_DIV: return "/";
+        case BINOP_MOD: return "%";
+        case BINOP_EQ: return "===";
+        case BINOP_NE: return "!==";
+        case BINOP_LT: return "<";
+        case BINOP_LE: return "<=";
+        case BINOP_GT: return ">";
+        case BINOP_GE: return ">=";
+        case BINOP_AND: return "&&";
+        case BINOP_OR: return "||";
+        case BINOP_BITWISE_AND: return "&";
+        case BINOP_BITWISE_OR: return "|";
+        case BINOP_BITWISE_XOR: return "^";
+        case BINOP_LEFT_SHIFT: return "<<";
+        case BINOP_RIGHT_SHIFT: return ">>";
+        default: return "?";
+    }
+}
+
+/* Convert unary operator to C */
+const char* hyp_unary_op_to_c(hyp_unary_op_t op) {
+    switch (op) {
+        case UNOP_PLUS: return "+";
+        case UNOP_MINUS: return "-";
+        case UNOP_NOT: return "!";
+        case UNOP_BITWISE_NOT: return "~";
+        case UNOP_INCREMENT: return "++";
+        case UNOP_DECREMENT: return "--";
+        default: return "?";
+    }
 }

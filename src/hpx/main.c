@@ -10,7 +10,51 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <getopt.h>
+#ifdef _WIN32
+    // Windows doesn't have getopt.h, we'll use a simple alternative
+    char* optarg = NULL;
+    int optind = 1;
+    
+    // Simple argument parsing for Windows
+    static int parse_args_win32(int argc, char* argv[], hpx_options_t* options) {
+        for (int i = 1; i < argc; i++) {
+            if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+                options->show_help = true;
+                return 1;
+            } else if (strcmp(argv[i], "--version") == 0) {
+                options->show_version = true;
+                return 1;
+            } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--verbose") == 0) {
+                options->verbose = true;
+            } else if (strcmp(argv[i], "-l") == 0 || strcmp(argv[i], "--list") == 0) {
+                options->list_commands = true;
+            } else if (strcmp(argv[i], "-C") == 0 && i + 1 < argc) {
+                options->working_dir = argv[++i];
+            } else if (strcmp(argv[i], "-t") == 0 && i + 1 < argc) {
+                options->timeout = atoi(argv[++i]);
+                if (options->timeout <= 0) {
+                    fprintf(stderr, "Error: Invalid timeout value\n");
+                    return -1;
+                }
+            } else if (strcmp(argv[i], "--offline") == 0) {
+                options->offline = true;
+            } else if (strcmp(argv[i], "--no-install") == 0) {
+                options->no_install = true;
+            } else if (strcmp(argv[i], "--clear-cache") == 0) {
+                options->clear_cache = true;
+            } else if (argv[i][0] != '-') {
+                if (!options->package_spec) {
+                    options->package_spec = argv[i];
+                } else if (!options->command) {
+                    options->command = argv[i];
+                }
+            }
+        }
+        return 0;
+    }
+#else
+    #include <getopt.h>
+#endif
 
 #define HPX_VERSION "0.1.0"
 
@@ -90,6 +134,11 @@ static bool parse_arguments(int argc, char* argv[], hpx_options_t* options) {
     memset(options, 0, sizeof(hpx_options_t));
     options->timeout = 300; /* Default 5 minutes */
     
+#ifdef _WIN32
+    if (parse_args_win32(argc, argv, options)) {
+        return true;
+    }
+#else
     int c;
     int option_index = 0;
     
@@ -132,6 +181,7 @@ static bool parse_arguments(int argc, char* argv[], hpx_options_t* options) {
                 return false;
         }
     }
+#endif
     
     /* Parse remaining arguments */
     if (optind < argc && !options->clear_cache) {
@@ -155,14 +205,14 @@ static bool parse_arguments(int argc, char* argv[], hpx_options_t* options) {
 }
 
 /* Execute clear cache command */
-static int execute_clear_cache(hyp_hpx_context_t* hpx, hpx_options_t* options) {
+static int execute_clear_cache(hpx_context_t* hpx, hpx_options_t* options) {
     if (options->verbose) {
         printf("Clearing package cache...\n");
     }
     
-    hyp_error_t result = hyp_hpx_clear_cache(hpx);
+    hyp_error_t result = hpx_clear_cache(hpx);
     if (result != HYP_OK) {
-        fprintf(stderr, "Error: %s\n", hyp_hpx_get_error(hpx));
+        fprintf(stderr, "Error: %s\n", hpx_get_error(hpx));
         return 1;
     }
     
@@ -171,7 +221,7 @@ static int execute_clear_cache(hyp_hpx_context_t* hpx, hpx_options_t* options) {
 }
 
 /* Execute list commands */
-static int execute_list_commands(hyp_hpx_context_t* hpx, hpx_options_t* options) {
+static int execute_list_commands(hpx_context_t* hpx, hpx_options_t* options) {
     if (!options->package_spec) {
         fprintf(stderr, "Error: Package specification required for listing commands\n");
         return 1;
@@ -184,9 +234,9 @@ static int execute_list_commands(hyp_hpx_context_t* hpx, hpx_options_t* options)
     hyp_string_t** commands;
     size_t command_count;
     
-    hyp_error_t result = hyp_hpx_list_commands(hpx, options->package_spec, &commands, &command_count);
+    hyp_error_t result = hpx_list_commands(hpx, options->package_spec, &commands, &command_count);
     if (result != HYP_OK) {
-        fprintf(stderr, "Error: %s\n", hyp_hpx_get_error(hpx));
+        fprintf(stderr, "Error: %s\n", hpx_get_error(hpx));
         return 1;
     }
     
@@ -205,7 +255,7 @@ static int execute_list_commands(hyp_hpx_context_t* hpx, hpx_options_t* options)
 }
 
 /* Execute package command */
-static int execute_package(hyp_hpx_context_t* hpx, hpx_options_t* options) {
+static int execute_package(hpx_context_t* hpx, hpx_options_t* options) {
     if (!options->package_spec) {
         fprintf(stderr, "Error: Package specification required\n");
         return 1;
@@ -213,9 +263,9 @@ static int execute_package(hyp_hpx_context_t* hpx, hpx_options_t* options) {
     
     /* Check if package is executable */
     bool is_executable;
-    hyp_error_t check_result = hyp_hpx_is_executable(hpx, options->package_spec, &is_executable);
+    hyp_error_t check_result = hpx_is_executable(hpx, options->package_spec, &is_executable);
     if (check_result != HYP_OK) {
-        fprintf(stderr, "Error: %s\n", hyp_hpx_get_error(hpx));
+        fprintf(stderr, "Error: %s\n", hpx_get_error(hpx));
         return 1;
     }
     
@@ -225,8 +275,8 @@ static int execute_package(hyp_hpx_context_t* hpx, hpx_options_t* options) {
     }
     
     /* Prepare execution options */
-    hyp_hpx_execution_options_t exec_options;
-    memset(&exec_options, 0, sizeof(hyp_hpx_execution_options_t));
+    hpx_exec_options_t exec_options;
+    memset(&exec_options, 0, sizeof(hpx_exec_options_t));
     
     exec_options.command = options->command;
     exec_options.args = options->args;
@@ -251,11 +301,11 @@ static int execute_package(hyp_hpx_context_t* hpx, hpx_options_t* options) {
     }
     
     /* Execute package */
-    hyp_hpx_execution_result_t result;
-    hyp_error_t exec_result = hyp_hpx_execute_package(hpx, options->package_spec, &exec_options, &result);
+    hpx_exec_result_t result;
+    hyp_error_t exec_result = hpx_execute_package(hpx, options->package_spec, &exec_options, &result);
     
     if (exec_result != HYP_OK) {
-        fprintf(stderr, "Error: %s\n", hyp_hpx_get_error(hpx));
+        fprintf(stderr, "Error: %s\n", hpx_get_error(hpx));
         return 1;
     }
     
@@ -295,7 +345,7 @@ static bool is_template_package(const char* package_spec) {
 }
 
 /* Execute template creation */
-static int execute_template(hyp_hpx_context_t* hpx, hpx_options_t* options) {
+static int execute_template(hpx_context_t* hpx, hpx_options_t* options) {
     if (!options->package_spec) {
         fprintf(stderr, "Error: Template specification required\n");
         return 1;
@@ -324,9 +374,9 @@ static int execute_template(hyp_hpx_context_t* hpx, hpx_options_t* options) {
         printf("Target directory: %s\n", target_dir);
     }
     
-    hyp_error_t result = hyp_hpx_create_project_from_template(hpx, options->package_spec, project_name, target_dir);
+    hyp_error_t result = hpx_create_project_from_template(hpx, options->package_spec, project_name, target_dir);
     if (result != HYP_OK) {
-        fprintf(stderr, "Error: %s\n", hyp_hpx_get_error(hpx));
+        fprintf(stderr, "Error: %s\n", hpx_get_error(hpx));
         return 1;
     }
     
@@ -356,7 +406,7 @@ int main(int argc, char* argv[]) {
     }
     
     /* Create HPX context */
-    hyp_hpx_context_t* hpx = hyp_hpx_create();
+    hpx_context_t* hpx = hpx_create();
     if (!hpx) {
         fprintf(stderr, "Error: Could not initialize package executor\n");
         return 1;
@@ -382,6 +432,6 @@ int main(int argc, char* argv[]) {
     }
     
     /* Cleanup */
-    hyp_hpx_destroy(hpx);
+    hpx_destroy(hpx);
     return result;
 }
